@@ -60,8 +60,7 @@ export class Control {
     waitForRequest(ms: number): Promise<void> {
         if (Atomics.load(this.#ints, REQUESTS) !== 0) return Promise.resolve();
         if (typeof Atomics.waitAsync === "function") {
-            const result = Atomics.waitAsync(this.#ints, REQUESTS, 0, ms);
-            return result.async ? result.value.then(() => undefined) : Promise.resolve();
+            return waitAsync(this.#ints, REQUESTS, 0, ms);
         }
         return new Promise((resolve) => setTimeout(resolve, Math.min(ms, 10)));
     }
@@ -73,8 +72,7 @@ export class Control {
             const left = end - Date.now();
             if (left <= 0) return false;
             if (typeof Atomics.waitAsync === "function") {
-                const result = Atomics.waitAsync(this.#ints, STATE, current, left);
-                if (result.async) await result.value;
+                await waitAsync(this.#ints, STATE, current, left);
             } else await new Promise((r) => setTimeout(r, Math.min(left, 5)));
         }
         return true;
@@ -90,4 +88,14 @@ export class Control {
         }
         return true;
     }
+}
+
+// Atomics.waitAsync, with a timer holding the event loop open until its timeout: Node 22 doesn't count a pending
+// waitAsync and exits under it.
+async function waitAsync(ints: Int32Array, index: number, value: number, ms: number): Promise<void> {
+    const result = Atomics.waitAsync(ints, index, value, ms);
+    if (!result.async) return;
+    const timer = setTimeout(() => undefined, ms);
+    await result.value;
+    clearTimeout(timer);
 }
