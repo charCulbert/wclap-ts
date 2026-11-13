@@ -20,7 +20,9 @@ Spawner.wasm
     spawner/ here (MIT), built by spawner/build.sh.
     Starts its own thread with pthread_create.
 
-Hive (not in the repo)
-    github.com/andremichelle/open-webclap, ports/hive (CC0-1.0); its bundle's page files are open-webclap's MIT code.
-    test/fetch-fixture.ts fetches it, pinned to a commit and checksum, into .cache/.
-    A host-synced note sequencer: notes passed down a chain, and the transport.
+Not in the repo: `npm run fixtures` fetches these into .cache/, pinned by release or commit and sha256, and prints
+each one's licence and source (test/fetch-fixture.ts lists them). A test fetches any it needs that's missing.
+    - gui-lifecycle and process-lifecycle, from github.com/charCulbert/wclap-test-plugins v0.2.0 (MIT).
+    - Twelve bundles built by github.com/andremichelle/open-webclap, each under its plug-in's own licence: Hive
+      (CC0-1.0; the note sequencer the chain tests use), Note Lab, Pearls, Oxo Synth2 and WetChorus (MIT), and seven
+      OpenRB-338 plug-ins (GPL-3.0-only). Their bundles' page files are open-webclap's MIT code.

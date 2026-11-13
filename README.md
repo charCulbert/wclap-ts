@@ -293,8 +293,9 @@ Needs Node 22.18 or later (it runs the TypeScript directly).
 
 ```sh
 npm install
-npm test        # Node's test runner, against the plug-ins in test/fixtures (Hive is downloaded once)
-npm run check   # types, then Biome (lint and format)
+npm run fixtures  # fetch the test plug-ins that aren't in the repo (npm test fetches any missing)
+npm test          # Node's test runner
+npm run check     # types, then Biome (lint and format)
 npm run build
 ```
 
