@@ -49,6 +49,7 @@
         "test": "node --test 'test/**/*.test.ts'",
         "fixtures": "node tools/fixtures.ts",
         "test:refs": "node --test test/refs.test.ts",
+        "test:browser": "npm run build && npm --prefix site run setup && node --test test/browser/site.browser.ts",
         "heavy": "node tools/heavy.ts one && node tools/heavy.ts two",
         "bench": "npm run build && node tools/bench.ts",
         "check": "tsc --noEmit && biome check . && node tools/check-worklet.ts",
@@ -56,7 +57,7 @@
         "build": "npm run build:runtime && npm run build:lib && npm run build:examples",
         "serve": "npm run build && node tools/serve.ts",
         "build:runtime": "rm -rf dist && mkdir -p dist && cp src/runtime/frame.html dist/ && esbuild src/runtime/worklet.ts src/runtime/worker.ts src/runtime/sw.ts src/runtime/frame.ts src/runtime/thread.ts --bundle --format=esm --target=es2022 --outdir=dist --entry-names=[name] --sourcemap",
-        "build:lib": "esbuild src/index.ts src/core.ts src/worklet-api.ts --bundle --format=esm --target=es2022 --outdir=dist --entry-names=[name] --sourcemap && esbuild tools/setup.ts --bundle --platform=node --format=esm --outfile=dist/setup.js --banner:js='#!/usr/bin/env node' && tsc -p tsconfig.build.json",
+        "build:lib": "esbuild src/index.ts src/core.ts src/worklet-api.ts --bundle --format=esm --target=es2022 --outdir=dist --entry-names=[name] --sourcemap && esbuild tools/setup.ts --bundle --platform=node --format=esm --outfile=dist/setup.js --banner:js='#!/usr/bin/env node' && chmod +x dist/setup.js && tsc -p tsconfig.build.json",
         "build:examples": "esbuild examples/*.ts --bundle --format=esm --target=es2022 --outdir=dist/examples --entry-names=[name] --sourcemap",
         "prepare": "npm run build:runtime && npm run build:lib"
     },

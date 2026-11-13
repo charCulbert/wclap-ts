@@ -296,6 +296,7 @@ npm install
 npm run fixtures  # fetch the test plug-ins that aren't in the repo (npm test fetches any missing)
 npm test          # Node's test runner, including saved audio (test/fixtures/refs.json)
 npm run check     # types, then Biome (lint and format)
+npm run test:browser  # the site's pages in Google Chrome (needs `cd site && npm install` once, and the network)
 npm run build
 ```
 

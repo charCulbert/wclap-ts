@@ -42,7 +42,9 @@ sw.addEventListener("fetch", (event: FetchEvent) => {
             const path = new URL(event.request.url).pathname;
             const shared = path.includes("/bundles/") || path.includes("/ui/");
             headers.set("Cross-Origin-Resource-Policy", shared ? "cross-origin" : "same-origin");
-            return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+            // A 204 or 304 can't be given a body, not even an empty one: the Response constructor throws.
+            const body = [101, 103, 204, 205, 304].includes(response.status) ? null : response.body;
+            return new Response(body, { status: response.status, statusText: response.statusText, headers });
         })(),
     );
 });
