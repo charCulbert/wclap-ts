@@ -294,13 +294,14 @@ Needs Node 22.18 or later (it runs the TypeScript directly).
 ```sh
 npm install
 npm run fixtures  # fetch the test plug-ins that aren't in the repo (npm test fetches any missing)
-npm test          # Node's test runner
+npm test          # Node's test runner, including saved audio (test/fixtures/refs.json)
 npm run check     # types, then Biome (lint and format)
 npm run build
 ```
 
 The examples and the site use [compost](https://github.com/charCulbert/compost) web components (knobs, a piano),
-installed from GitHub. `npm run gen` regenerates the CLAP struct layouts from the headers in `external/clap/include`
+installed from GitHub. After a change meant to alter a plug-in's sound, `UPDATE_REFS=1 npm run test:refs` saves the
+new output. `npm run gen` regenerates the CLAP struct layouts from the headers in `external/clap/include`
 (it fetches the WASI SDK's clang on first run).
 
 ## Thanks

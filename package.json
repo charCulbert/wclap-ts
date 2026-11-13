@@ -48,6 +48,7 @@
         "gen": "node tools/gen-clap.ts && biome format --write src/plugin/clap.generated.ts",
         "test": "node --test 'test/**/*.test.ts'",
         "fixtures": "node tools/fixtures.ts",
+        "test:refs": "node --test test/refs.test.ts",
         "heavy": "node tools/heavy.ts one && node tools/heavy.ts two",
         "bench": "npm run build && node tools/bench.ts",
         "check": "tsc --noEmit && biome check . && node tools/check-worklet.ts",

@@ -1,0 +1,110 @@
+{
+    "PICOH-101": {
+        "sha256": "00612448f76d933a7675fe1f6b4be2d5be0eebd06b66e35acb8016b5a1ee19a4",
+        "peak": 0.2736,
+        "rms": 0.0759,
+        "notesOut": 0
+    },
+    "Tapa": {
+        "sha256": "715f7df29f2d8aa49aaeb699fc9b83828960a17f7701fa4df7336d9059df59f4",
+        "peak": 0.3037,
+        "rms": 0.0604,
+        "notesOut": 0
+    },
+    "HeadlessGain": {
+        "sha256": "48b9f61c5bb8133eedd251b7fd90ac7a140018303c7582c1e8e8cdabaab68996",
+        "peak": 0.5,
+        "rms": 0.1901,
+        "notesOut": 0
+    },
+    "HeavyMain": {
+        "sha256": "48b9f61c5bb8133eedd251b7fd90ac7a140018303c7582c1e8e8cdabaab68996",
+        "peak": 0.5,
+        "rms": 0.1901,
+        "notesOut": 0
+    },
+    "gui-lifecycle": {
+        "sha256": "eb55aa8c7375c8c232dfce5d21276b68082ae5e9bf4378bc90007daed0d057a8",
+        "peak": 0.5,
+        "rms": 0.3093,
+        "notesOut": 0
+    },
+    "process-lifecycle": {
+        "sha256": "0195684e8b8a7d598a16eb1a4569e173f14b4ee321b350e27d7bcd9d46ad8ffc",
+        "peak": 0.6,
+        "rms": 0.5452,
+        "notesOut": 0
+    },
+    "hive": {
+        "sha256": "0773388f02e775c4c570676e35cd7f4022b1b919d0e2ad5d684191d7a0f51cf6",
+        "peak": 0.5,
+        "rms": 0.3093,
+        "notesOut": 22
+    },
+    "note-lab": {
+        "sha256": "7d4758913852ef9165b8f09674165cfa2afc791a36338ffc2729a67e99640aca",
+        "peak": 0.5,
+        "rms": 0.3093,
+        "notesOut": 4
+    },
+    "pearls": {
+        "sha256": "7d9c8f30596e262ec56e98c89459869600aa49dc64973e8b315506d551b9945d",
+        "peak": 0.3194,
+        "rms": 0.1724,
+        "notesOut": 0
+    },
+    "oxo-synth2": {
+        "sha256": "ca7825cba651e8def5486ac39843b88bf56382202db6198fec4b520f61a53244",
+        "peak": 0.1238,
+        "rms": 0.036,
+        "notesOut": 0
+    },
+    "wet-chorus": {
+        "sha256": "a18409e96f9f76b7773b4e84d85608867b8e7b42988e37da694de86ca63a0f00",
+        "peak": 0.7274,
+        "rms": 0.2403,
+        "notesOut": 0
+    },
+    "openrb-808": {
+        "sha256": "7e6aeb9dddbe87a85a579ec6ef1822f977c79126cb4657246622ee76db2f7b0f",
+        "peak": 1.2811,
+        "rms": 0.1855,
+        "notesOut": 0
+    },
+    "openrb-909": {
+        "sha256": "f56152c6bb11a8f77edc36a2f74595d4f01ff21e795b5fdba0d8d783a2e1e6a8",
+        "peak": 1.5218,
+        "rms": 0.1354,
+        "notesOut": 0
+    },
+    "openrb-bass": {
+        "sha256": "5198b87207f9c1c8c3d13189cd1c85384a907e2b3e8ffeabaaea9e66b07eb6dd",
+        "peak": 1.3548,
+        "rms": 0.1424,
+        "notesOut": 0
+    },
+    "openrb-compressor": {
+        "sha256": "7c5e7abd67a182c039757f75e0cef9c60924d57d086bcbe8dd921c468039ba86",
+        "peak": 0.5364,
+        "rms": 0.2459,
+        "notesOut": 0
+    },
+    "openrb-delay": {
+        "sha256": "240b1e20a225fa3486a5d191101ac46056ae398722b77fe46a7f2c6acf294830",
+        "peak": 0.5825,
+        "rms": 0.3078,
+        "notesOut": 0
+    },
+    "openrb-distortion": {
+        "sha256": "adbd012a8e8fd6e60c3b423c7d6653a6ea62116211d35c93c456a463b0c1ccf4",
+        "peak": 0.579,
+        "rms": 0.4001,
+        "notesOut": 0
+    },
+    "openrb-pcf": {
+        "sha256": "a19b6c6f7ee261f2db317e8400e62158c021818fd4a45ec0934d548fb8d16725",
+        "peak": 0.7676,
+        "rms": 0.2254,
+        "notesOut": 0
+    }
+}
