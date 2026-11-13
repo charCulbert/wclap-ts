@@ -37,6 +37,7 @@ const rows: [string, Result][] = [
     ["One thread", await run("?threads=one")],
     ["An idle chain (HeadlessGain, no loads)", await run("?idle")],
 ];
+const adds = [await run("?add"), await run("?add"), await run("?add")].map((r) => Math.round(r.worstGapMs));
 await browser.close();
 server.kill();
 
@@ -48,3 +49,4 @@ for (const [name, r] of rows) {
     const block = r.worstRenderMs <= 1 ? "1 ms or less" : `${r.worstRenderMs} ms`;
     console.log(`| ${name} | ${r.stalls} | ${Math.round(r.worstGapMs)} ms | ${block} |`);
 }
+console.log(`\nAdding PICOH-101 on the audio thread to a playing chain, longest gap: ${adds.join(", ")} ms`);

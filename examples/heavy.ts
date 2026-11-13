@@ -1,10 +1,12 @@
 // HeavyMain for 3 s, its state loaded five times, with the audio thread's stats at the end. The measurement behind
-// docs/threads.md; tools/bench.ts runs it in Chrome. Query: ?threads=one, or ?idle (HeadlessGain, no loads).
+// docs/threads.md; tools/bench.ts runs it in Chrome. Query: ?threads=one, ?idle (HeadlessGain, no loads), or ?add (PICOH-101
+// added while it plays, on the audio thread).
 import { createChain, type Stats } from "../src/index.ts";
 import { base, started, status } from "./shared.ts";
 
 const query = new URLSearchParams(location.search);
 const idle = query.has("idle");
+const adding = query.has("add");
 const context = await started();
 let stats: Stats | undefined;
 const chain = await createChain(context, {
@@ -15,13 +17,18 @@ const chain = await createChain(context, {
     },
 });
 chain.connect(context.destination);
-const plugin = await chain.add(`/test/fixtures/${idle ? "HeadlessGain" : "HeavyMain"}.wclap.tar.gz`);
+const plugin = await chain.add(`/test/fixtures/${idle || adding ? "HeadlessGain" : "HeavyMain"}.wclap.tar.gz`);
+if (adding) {
+    // A larger plug-in added to the chain while it plays, all on the audio thread: the one interruption.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await chain.add("/test/fixtures/PICOH-101.wclap.tar.gz", { threads: "one" });
+}
 const state = await plugin.saveState();
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 status("playing");
 await wait(500);
-for (let i = 0; i < 5 && !idle; i++) {
+for (let i = 0; i < 5 && !idle && !adding; i++) {
     await plugin.loadState(state);
     await wait(400);
 }

@@ -67,6 +67,8 @@ with the audio thread's `onStats` at the end. Chrome 157 on an M1 Pro Mac, 48 kH
 | One thread                                             | 5                        | 181 ms                     | 1 ms or less  |
 | An idle chain (HeadlessGain, no loads), for comparison | 0                        | 7 ms                       | 1 ms or less  |
 
+Adding PICOH-101 to a playing chain, on the audio thread, gave a longest gap of 7 to 8 ms over three runs.
+
 With one thread the state loads run on the audio thread between blocks, so the audio waits for them; with two
 they run on the Worker and the audio doesn't notice.
 

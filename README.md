@@ -199,9 +199,9 @@ wclap-ts's own arrangement, not part of WCLAP: wasi-threads has no way for a hos
 wclap-ts sets the thread up from these exports and checks the result. If anything doesn't match what it expects, the
 plug-in runs on the audio thread alone instead. `docs/threads.md` explains it.
 
-Adding a plug-in that runs on the audio thread to a playing chain interrupts the audio once, while it starts (13 to
-26 ms for a large one, in Chrome on an M1 Pro Mac; see `docs/threads.md`). A two-thread plug-in starts on its Worker
-and doesn't.
+Adding a plug-in that runs on the audio thread to a playing chain starts it there, between two blocks. For
+PICOH-101 the longest gap between blocks stays under 10 ms, below the 20 ms that counts as a stall (`npm run bench`).
+A two-thread plug-in starts on its Worker.
 
 ## Security
 
