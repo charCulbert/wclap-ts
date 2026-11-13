@@ -313,5 +313,3 @@ installed from GitHub. `npm run gen` regenerates the CLAP struct layouts from th
   in the tests and examples (CC0-1.0), and for [open-webclap](https://github.com/andremichelle/open-webclap).
 - [nakst's CLAP tutorial](https://nakst.gitlab.io/tutorial/clap-part-1.html), the layout the HeavyMain test plug-in
   follows.
-- The [WASI SDK](https://github.com/WebAssembly/wasi-sdk), whose clang reads the CLAP headers, and
-  [TypeScript](https://www.typescriptlang.org), [esbuild](https://esbuild.github.io) and [Biome](https://biomejs.dev).
