@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A chain · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js", "compost/": "/node_modules/compost/src/" } }</script>
+</head>
+<body>
+<main>
+    <h1>A chain: sequencer → synth → delay</h1>
+    <p class="lead">Three plug-ins in one AudioWorkletNode. Hive, a note sequencer, plays on the beat and starts more patterns on the keys you hold; its notes play the synth; the synth's audio goes through the delay. Bypass, reorder or change the tempo while it plays: no clicks, no hanging notes.</p>
+    <div class="demo">
+    <div class="bar">
+    <button id="start" class="primary">Start</button>
+    <button id="bypass-seq">Bypass sequencer</button>
+    <button id="bypass-delay">Bypass delay</button>
+    <label>Tempo <input id="tempo" type="range" min="60" max="180" value="120"></label>
+    </div>
+    <compost-piano root-note="48" note-count="25" inline></compost-piano>
+    <p class="status"></p>
+    </div>
+</main>
+<script type="module" id="example">
+import "compost/components/compost-piano.js";
+import { createChain, isolate } from "wclap-ts";
+
+// Shared memory needs a cross-origin-isolated page. Where the server can't send the two headers, a service worker
+// adds them (the page reloads once, the first time).
+await isolate();
+const status = document.querySelector(".status");
+// Plug-ins load from any URL that allows it (CORS): these from GitHub, charCulbert/char-wclaps.
+const WCLAPS = "https://raw.githubusercontent.com/charCulbert/char-wclaps/main/";
+// Hive, a note sequencer (CC0-1.0), from github.com/andremichelle/open-webclap, pinned to a commit.
+const HIVE = "https://raw.githubusercontent.com/andremichelle/open-webclap/b430912ae8fa21b42b10ab6d0bf22c6c541c7c36/site/public/bundled/hive.wclap.tar.gz";
+
+// Browsers start audio only after a click.
+await new Promise((resolve) => (document.querySelector("#start").onclick = resolve));
+const context = new AudioContext();
+const chain = await createChain(context);
+const sequencer = await chain.add(HIVE);
+const synth = await chain.add(WCLAPS + "PICOH-101.wclap.tar.gz");
+const delay = await chain.add(WCLAPS + "Slide.wclap.tar.gz");
+chain.connect(context.destination);
+
+// Notes go to the first plug-in; what it plays goes on to the next.
+const piano = document.querySelector("compost-piano"); // it plays from the computer keyboard too
+piano.addEventListener("note-down", (e) => chain.noteOn(e.detail.note, 0.8));
+piano.addEventListener("note-up", (e) => chain.noteOff(e.detail.note));
+
+const toggle = (plugin, button) => () => {
+    plugin.enabled = !plugin.enabled;     // bypass: fades over one block, lets go of its notes
+    button.textContent = `${plugin.enabled ? "Bypass" : "Enable"} ${plugin.descriptor.name}`;
+};
+const sequencerButton = document.querySelector("#bypass-seq");
+const delayButton = document.querySelector("#bypass-delay");
+sequencerButton.onclick = toggle(sequencer, sequencerButton);
+delayButton.onclick = toggle(delay, delayButton);
+document.querySelector("#tempo").oninput = (e) => {
+    chain.transport.tempo = Number(e.target.value);  // host-synced plug-ins (the sequencer) follow
+    status.textContent = `tempo ${chain.transport.tempo}`;
+};
+
+status.textContent = `${chain.plugins.map((p) => p.descriptor.name).join(" → ")} · play the piano`;
+</script>
+<script type="module" src="common.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+Heavy Main: char-clap-template's effect-headless, plus heavy main-thread work for the threading tests. Loading a
+state rebuilds a 64-table wavetable bank on the main thread (plugin.cpp, PluginBuildBank) and hands it to the audio
+thread through an atomic; the audio thread adds a quiet oscillator from it, and never allocates.
+
+Built from a project made by the template's tools/new-plugin.py (--from effect-headless), with these files in place
+of its own, by: cmake -B build-wclap -G Ninja -DCMAKE_TOOLCHAIN_FILE=$WASI_SDK_PATH/share/cmake/wasi-sdk-p1.cmake
+The build is ../HeavyMain.wclap.tar.gz.

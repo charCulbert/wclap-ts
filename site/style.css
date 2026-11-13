@@ -1,0 +1,89 @@
+/* The same look as compost's examples: system colours, hairlines, square corners, light or dark by a toggle. */
+:root {
+    --font: ui-sans-serif, system-ui, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: Canvas;
+    --text: CanvasText;
+    --muted: color-mix(in srgb, currentColor 65%, transparent);
+    --line: color-mix(in srgb, currentColor 30%, transparent);
+    --tint: color-mix(in srgb, currentColor 5%, transparent);
+    --accent: AccentColor;
+    color-scheme: light;
+    font-family: var(--font);
+}
+:root[data-color-scheme="dark"] { color-scheme: dark; }
+
+* { box-sizing: border-box; border-radius: 0; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--font); }
+button, input, select, textarea { font: inherit; }
+a { color: inherit; }
+h1, h2, h3, p { margin: 0; }
+
+.page { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
+nav { border-right: 1px solid var(--line); padding: 24px 12px; display: flex; flex-direction: column; gap: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+nav a { text-decoration: none; padding: 6px 10px; font-size: 14px; border: 1px solid transparent; }
+nav a:hover { border-color: var(--line); }
+nav a.here { background: var(--text); color: var(--bg); }
+nav .brand { font-weight: 700; font-size: 17px; padding: 0 10px 14px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+nav .color-scheme-toggle { margin: auto 10px 0; }
+
+main { padding: 24px 32px 56px; max-width: 1400px; display: grid; gap: 16px; align-content: start; }
+main > h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+h2 { font-size: 19px; margin-top: 18px; }
+h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; }
+p { max-width: 75ch; line-height: 1.45; }
+.lead, .muted, .hint { color: var(--muted); }
+.lead { font-size: 16px; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 14px; align-items: start; }
+.result, .source { border: 1px solid var(--line); padding: 14px; min-width: 0; }
+.demo { display: grid; gap: 12px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+button, select, .color-scheme-toggle {
+    min-height: 34px; padding: 0 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer;
+}
+button:hover, select:hover { border-color: currentColor; }
+button.primary { background: var(--text); border-color: var(--text); color: var(--bg); }
+button:disabled { opacity: 0.55; cursor: default; }
+button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+input[type="range"] { accent-color: var(--text); }
+label { font-size: 14px; display: inline-flex; gap: 8px; align-items: center; }
+
+.ui { border: 1px dashed var(--line); min-height: 48px; overflow: hidden; }
+.ui:empty::before { content: "the plug-in's interface appears here"; display: block; padding: 14px; color: var(--muted); font-size: 13px; }
+.status { font: 13px var(--mono); color: var(--muted); min-height: 1.5em; }
+
+pre { margin: 0; overflow-x: auto; font: 13px/1.55 var(--mono); }
+.source pre { white-space: pre; }
+pre.block { border: 1px solid var(--line); background: var(--tint); padding: 12px 14px; }
+code { font: 13px var(--mono); background: var(--tint); padding: 1px 4px; }
+.c { color: var(--muted); font-style: italic; }
+.t { color: var(--muted); }
+.source-head { display: flex; justify-content: space-between; align-items: start; }
+.source-head h3 { text-transform: none; letter-spacing: 0; font: 13px var(--mono); }
+.copy { min-height: 26px; font-size: 13px; }
+.k { font-weight: 650; }
+.s, .n { color: var(--accent); }
+.log { max-height: 160px; overflow-y: auto; font: 12px/1.45 var(--mono); border: 1px solid var(--line); color: var(--muted); padding: 10px; margin: 0; }
+
+.cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+.cards a { display: grid; gap: 6px; align-content: start; padding: 14px; border: 1px solid var(--line); text-decoration: none; color: var(--muted); }
+.cards a:hover { border-color: currentColor; }
+.cards a strong { color: var(--text); }
+
+.wclap-panel { display: grid; gap: 8px; padding: 10px; }
+.wclap-panel label { display: grid; grid-template-columns: 130px 1fr 80px; gap: 10px; }
+
+compost-window #ui, compost-window > div { width: 100%; }
+.levels { display: flex; gap: 16px; align-items: flex-end; }
+.levels compost-scope { display: block; flex: 1; min-width: 0; height: 140px; }
+
+@media (max-width: 1000px) { .split { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) {
+    .page { grid-template-columns: minmax(0, 1fr); }
+    nav { position: static; height: auto; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 16px; }
+    nav .brand { width: 100%; padding: 0 0 8px; }
+    nav .color-scheme-toggle { margin: 0 0 0 auto; }
+    main { padding: 20px 16px 48px; }
+}

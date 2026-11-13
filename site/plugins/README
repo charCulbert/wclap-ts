@@ -1,0 +1,2 @@
+HeadlessGain.wclap.tar.gz: the same build as test/fixtures/HeadlessGain.wclap.tar.gz, from
+github.com/charCulbert/char-clap-template, examples/effect-headless (MIT). A gain with no interface.

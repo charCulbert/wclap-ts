@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your own graph · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js" } }</script>
+</head>
+<body>
+<main>
+    <h1>Your own graph in one AudioWorklet</h1>
+    <p class="lead">For a DAW-like page: you write the routing (here <a href="my-mixer.js">my-mixer.js</a>: tracks, a delay bus fed by sends, latency compensation) and wclap-ts does the plug-in hosting. A kick from Tapa and an acid bassline from PICOH-101, sequenced on a shared transport, with the bass sending to a delay timed from the tempo.</p>
+    <div data-file="my-mixer.js"></div>
+    <div class="demo">
+    <div class="bar">
+    <button id="start" class="primary">Start</button>
+    <label>Tempo <input id="tempo" type="range" min="100" max="160" value="132"></label>
+    <label>Delay send <input id="send" type="range" min="0" max="1" step="0.01" value="0.15"></label>
+    </div>
+    <p class="status"></p>
+    </div>
+</main>
+<script type="module" id="example">
+import { createHost, createTransport, isolate } from "wclap-ts";
+
+// Shared memory needs a cross-origin-isolated page. Where the server can't send the two headers, a service worker
+// adds them (the page reloads once, the first time).
+await isolate();
+const status = document.querySelector(".status");
+// Plug-ins load from any URL that allows it (CORS): these from GitHub, charCulbert/char-wclaps.
+const WCLAPS = "https://raw.githubusercontent.com/charCulbert/char-wclaps/main/";
+
+// Browsers start audio only after a click.
+await new Promise((resolve) => (document.querySelector("#start").onclick = resolve));
+const context = new AudioContext();
+
+// One transport for the page: the sequencer below reads its tempo, and so do any host-synced plug-ins. Pass the
+// same one to every host you make and they stay in step.
+const transport = createTransport(context, { tempo: 132 });
+const host = await createHost(context, {
+    module: "/my-mixer.js",    // your AudioWorklet module
+    processor: "my-mixer",     // the name it registered
+    transport,
+});
+host.connect(context.destination);
+
+const kick = await host.add(WCLAPS + "tapa.wclap.tar.gz");
+const bass = await host.add(WCLAPS + "PICOH-101.wclap.tar.gz");
+const delay = await host.add(WCLAPS + "Slide.wclap.tar.gz");
+
+await kick.loadPreset((await kick.presets()).find((p) => p.name === "Deep Kick"));
+
+// An acid patch: saw only, a low resonant filter opened by a short envelope, and glide on tied notes.
+const ACID = {
+    "Range": 0, "Saw Level": 1, "Pulse Level": 0, "Sub Osc Level": 0,
+    "VCF Frequency": 190, "VCF Resonance": 0.85, "VCF Env": 0.85, "VCF Keyboard": 0.3,
+    "Attack": 0.0015, "Decay": 0.18, "Sustain": 0, "Release": 0.04,
+    "Portamento": 0.11, "Portamento Mode": 0, "Volume": 0.8,
+};
+const id = (name) => bass.params.find((p) => p.name === name).id;
+for (const [name, value] of Object.entries(ACID)) bass.param(id(name), value);
+const ENV = id("VCF Env");
+
+// The delay: wet only on its bus, a dotted eighth at the tempo.
+delay.param(delay.params.find((p) => p.name === "Mix").id, 100);
+const delayTime = () => delay.param(delay.params.find((p) => p.name === "Left time").id, (0.75 * 60000) / transport.tempo);
+delayTime();
+
+// The routing is yours: send whatever your mixer understands. Latencies line the tracks up.
+const sends = (level) => [{ from: 1, to: 2, gain: level }];
+host.send({
+    tracks: [
+        { plugins: [kick.id], gain: 0.9, latency: await kick.latency() },
+        { plugins: [bass.id], gain: 0.8, latency: await bass.latency() },
+        { plugins: [delay.id], gain: 0.5, latency: 0, bus: true },
+    ],
+    sends: sends(0.15),
+});
+// Just new levels: the mixer changes its send gains and keeps playing.
+document.querySelector("#send").oninput = (e) => host.send({ sends: sends(Number(e.target.value)) });
+document.querySelector("#tempo").oninput = (e) => {
+    transport.tempo = Number(e.target.value);
+    delayTime();
+    status.textContent = `${transport.tempo} bpm`;
+};
+
+// Sixteen steps: [note, accent, slide into the next], or null for a rest.
+const A = 45, C = 48, D = 50, E = 52, G = 43;
+const PATTERN = [
+    [A, 1, 0], [A, 0, 1], [A + 12, 0, 1], [A, 0, 0], null, [C, 1, 1], [A, 0, 0], [G, 0, 1],
+    [A, 0, 1], [A + 12, 1, 0], null, [E, 0, 1], [D, 0, 1], [A, 1, 0], [C, 0, 1], [G, 0, 1],
+];
+
+// A sequencer scheduled ahead on the AudioContext clock, each step's length from the transport's tempo: every
+// note, accent and slide lands on its exact frame.
+let next = context.currentTime + 0.1;
+let step = 0;
+setInterval(() => {
+    while (next < context.currentTime + 0.2) {
+        const sixteenth = 60 / transport.tempo / 4;
+        if (step % 4 === 0) {
+            kick.noteOn(36, 1, next);
+            kick.noteOff(36, 0, next + 0.05);
+        }
+        const s = PATTERN[step % 16];
+        if (s) {
+            const [note, accent, slide] = s;
+            bass.noteOn(note, 0.8, next);
+            bass.param(ENV, accent ? 1 : 0.85, next);    // an accent opens the filter wider
+            bass.noteOff(note, 0, next + sixteenth * (slide ? 1.1 : 0.5));    // tied past the next note: it glides
+        }
+        next += sixteenth;
+        step++;
+    }
+}, 25);
+status.textContent = `${transport.tempo} bpm · kick latency ${await kick.latency()} frames, compensated in the worklet`;
+</script>
+<script type="module" src="common.js"></script>
+</body>
+</html>

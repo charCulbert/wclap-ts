@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One plug-in · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js", "compost/": "/node_modules/compost/src/" } }</script>
+</head>
+<body>
+<main>
+    <h1>One plug-in with its own interface</h1>
+    <p class="lead">The smallest useful page: load a synth, show its interface, play it from the piano (or the computer keyboard: A S D F…). Turn its knobs and watch the parameter events arrive. Save and restore its sound.</p>
+    <div class="demo">
+    <div class="bar">
+    <button id="start" class="primary">Start</button>
+    <button id="save">Save sound</button>
+    <button id="restore">Restore sound</button>
+    </div>
+    <compost-piano root-note="48" note-count="25" inline></compost-piano>
+    <div id="ui" class="ui"></div>
+    <p class="status"></p>
+    </div>
+</main>
+<script type="module" id="example">
+import "compost/components/compost-piano.js";
+import { isolate, loadWclap } from "wclap-ts";
+
+// Shared memory needs a cross-origin-isolated page. Where the server can't send the two headers, a service worker
+// adds them (the page reloads once, the first time).
+await isolate();
+const status = document.querySelector(".status");
+// Plug-ins load from any URL that allows it (CORS): these from GitHub, charCulbert/char-wclaps.
+const WCLAPS = "https://raw.githubusercontent.com/charCulbert/char-wclaps/main/";
+
+// Browsers start audio only after a click.
+await new Promise((resolve) => (document.querySelector("#start").onclick = resolve));
+const context = new AudioContext();
+const synth = await loadWclap(context, WCLAPS + "PICOH-101.wclap.tar.gz", {
+    ui: document.querySelector("#ui"),     // its own interface goes here
+});
+synth.connect(context.destination);
+
+
+// Notes: now, or at an AudioContext time for an exact frame.
+const piano = document.querySelector("compost-piano"); // it plays from the computer keyboard too
+piano.addEventListener("note-down", (e) => synth.noteOn(e.detail.note, 0.8));
+piano.addEventListener("note-up", (e) => synth.noteOff(e.detail.note));
+
+// The plug-in moving its own parameters (its interface's knobs) shows up as events.
+synth.addEventListener("param", (e) => {
+    const p = synth.params.find((q) => q.id === e.detail.id);
+    status.textContent = `${p?.name ?? e.detail.id} = ${e.detail.value.toFixed(3)}`;
+});
+
+// State is bytes: keep it anywhere.
+let saved;
+document.querySelector("#save").onclick = async () => {
+    saved = await synth.saveState();
+    status.textContent = `saved ${saved.length} bytes`;
+};
+document.querySelector("#restore").onclick = async () => {
+    if (saved) await synth.loadState(saved);
+    status.textContent = "restored";
+};
+
+status.textContent = `${synth.descriptor.name}: main-thread work on ${synth.threads === "two" ? "a Worker" : "the audio thread"}`;
+</script>
+<script type="module" src="common.js"></script>
+</body>
+</html>

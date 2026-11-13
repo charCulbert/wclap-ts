@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chain builder · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<style>
+    #chain { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+    #chain li button { margin-right: 4px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+</style>
+</head>
+<body>
+<main>
+    <nav><a href="index.html">Examples</a></nav>
+    <h1>Chain builder</h1>
+    <p class="muted">Add plug-ins in order: notes and audio flow from each to the next. Try Hive, then PICOH-101, then Slide. Click a plug-in's name to open its interface.</p>
+    <div class="bar">
+        <button id="start" class="primary" type="button">Start</button>
+        <select id="pick" aria-label="Plug-in"></select>
+        <button id="add" type="button">Add</button>
+        <button id="midi" type="button">Connect MIDI</button>
+        <button id="tone" type="button">Test tone</button>
+    </div>
+    <div class="controls">
+        <compost-knob id="tempo" parameter-id="tempo" label="Tempo" min="60" max="180" value="120" unit="BPM"></compost-knob>
+    </div>
+    <ol id="chain"></ol>
+    <div id="ui" class="panel"></div>
+    <compost-piano root-note="48" note-count="25" inline></compost-piano>
+    <p id="status"></p>
+    <details><summary>The code for this page</summary><pre id="source"></pre></details>
+</main>
+<script type="module" src="/dist/examples/chain.js"></script>
+</body>
+</html>

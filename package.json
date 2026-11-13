@@ -1,0 +1,67 @@
+{
+    "name": "wclap-ts",
+    "version": "0.1.0",
+    "description": "WCLAP audio plug-ins on a web page: one, a chain, or several side by side.",
+    "license": "MIT",
+    "author": "Charlie Culbert",
+    "homepage": "https://github.com/charCulbert/wclap-ts#readme",
+    "bugs": "https://github.com/charCulbert/wclap-ts/issues",
+    "keywords": [
+        "clap",
+        "wclap",
+        "audio",
+        "plugin",
+        "webassembly",
+        "audioworklet",
+        "web-audio"
+    ],
+    "repository": "github:charCulbert/wclap-ts",
+    "private": true,
+    "type": "module",
+    "engines": {
+        "node": ">=22.18"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/types/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./core": {
+            "types": "./dist/types/core.d.ts",
+            "default": "./dist/core.js"
+        },
+        "./worklet": {
+            "types": "./dist/types/worklet-api.d.ts",
+            "default": "./dist/worklet-api.js"
+        }
+    },
+    "bin": {
+        "wclap-ts": "dist/setup.js"
+    },
+    "files": [
+        "dist/*.js",
+        "dist/*.js.map",
+        "dist/frame.html",
+        "dist/types"
+    ],
+    "scripts": {
+        "gen": "node tools/gen-clap.ts && biome format --write src/plugin/clap.generated.ts",
+        "test": "node --test 'test/**/*.test.ts'",
+        "heavy": "node tools/heavy.ts one && node tools/heavy.ts two",
+        "check": "tsc --noEmit && biome check . && node tools/check-worklet.ts",
+        "fix": "biome check --write .",
+        "build": "npm run build:runtime && npm run build:lib && npm run build:examples",
+        "serve": "npm run build && node tools/serve.ts",
+        "build:runtime": "rm -rf dist && mkdir -p dist && cp src/runtime/frame.html dist/ && esbuild src/runtime/worklet.ts src/runtime/worker.ts src/runtime/sw.ts src/runtime/frame.ts src/runtime/thread.ts --bundle --format=esm --target=es2022 --outdir=dist --entry-names=[name] --sourcemap",
+        "build:lib": "esbuild src/index.ts src/core.ts src/worklet-api.ts --bundle --format=esm --target=es2022 --outdir=dist --entry-names=[name] --sourcemap && esbuild tools/setup.ts --bundle --platform=node --format=esm --outfile=dist/setup.js --banner:js='#!/usr/bin/env node' && tsc -p tsconfig.build.json",
+        "build:examples": "esbuild examples/*.ts --bundle --format=esm --target=es2022 --outdir=dist/examples --entry-names=[name] --sourcemap",
+        "prepare": "npm run build:runtime && npm run build:lib"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "2.6.5",
+        "@types/node": "26.6.6",
+        "compost": "github:charCulbert/compost",
+        "esbuild": "0.28.2",
+        "typescript": "7.0.2"
+    }
+}

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A rack · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": {
+    "wclap-ts": "/node_modules/wclap-ts/dist/index.js",
+    "compost/": "/node_modules/compost/src/"
+} }</script>
+<style>
+    .rack { display: grid; gap: 10px; }
+    .strip { border: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 8px; }
+    .strip header { display: flex; gap: 10px; align-items: center; }
+    .strip header strong { flex: 1; }
+    .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 18px; }
+    .params label { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 10px; align-items: center; min-height: 26px; }
+    .params span { text-align: right; color: var(--muted, #666); font-size: 13px; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+    <h1>A rack with number boxes and windows</h1>
+    <p class="lead">Sequencer → synth → delay, each as a strip of compost number boxes, one for every parameter the plug-in shows. Drag or type a number to move the plug-in; the plug-in's own changes and its presets move the numbers. Bypass any strip while it plays, or open a plug-in's own interface in a window.</p>
+    <div class="demo">
+    <div class="bar">
+    <button id="start" class="primary">Start</button>
+    <label style="display: inline-flex; gap: 8px; align-items: center">Tempo <compost-number-box id="tempo" min="60" max="180" value="120" step="1" unit=" bpm" style="width: 96px"></compost-number-box></label>
+    </div>
+    <div class="rack" id="rack"></div>
+    <compost-piano root-note="48" note-count="25" inline></compost-piano>
+    <p class="status"></p>
+    </div>
+</main>
+<script type="module" id="example">
+import { createChain, isolate } from "wclap-ts";
+import "compost/components/compost-number-box.js";
+import "compost/components/compost-button.js";
+import "compost/components/compost-window.js";
+import "compost/components/compost-piano.js";
+
+// Shared memory needs a cross-origin-isolated page. Where the server can't send the two headers, a service worker
+// adds them (the page reloads once, the first time).
+await isolate();
+const status = document.querySelector(".status");
+// Plug-ins load from any URL that allows it (CORS): these from GitHub, charCulbert/char-wclaps.
+const WCLAPS = "https://raw.githubusercontent.com/charCulbert/char-wclaps/main/";
+// Hive, a note sequencer (CC0-1.0), from github.com/andremichelle/open-webclap, pinned to a commit.
+const HIVE = "https://raw.githubusercontent.com/andremichelle/open-webclap/b430912ae8fa21b42b10ab6d0bf22c6c541c7c36/site/public/bundled/hive.wclap.tar.gz";
+
+// Browsers start audio only after a click.
+await new Promise((resolve) => (document.querySelector("#start").onclick = resolve));
+const context = new AudioContext();
+const chain = await createChain(context);
+for (const url of [HIVE, WCLAPS + "PICOH-101.wclap.tar.gz", WCLAPS + "Slide.wclap.tar.gz"])
+    await chain.add(url);
+chain.connect(context.destination);
+
+// A strip per plug-in: its name, presets, bypass, its interface in a window, and a number box per parameter.
+const HIDDEN = 1 << 3; // CLAP_PARAM_IS_HIDDEN
+const STEPPED = 1 << 0; // CLAP_PARAM_IS_STEPPED
+for (const plugin of chain.plugins) {
+    const strip = document.createElement("section");
+    strip.className = "strip";
+    strip.innerHTML = `<header><strong>${plugin.descriptor.name}</strong>
+        <select hidden aria-label="Presets"></select>
+        <compost-button mode="switch" label="Bypass"></compost-button>
+        <button>Interface</button></header><div class="params"></div>`;
+    document.querySelector("#rack").append(strip);
+
+    strip.querySelector("compost-button").addEventListener("parameter-edit", (e) => {
+        plugin.enabled = e.detail.value === 0;
+    });
+
+    const boxes = new Map();
+    for (const p of plugin.params.filter((p) => !(p.flags & HIDDEN))) {
+        const row = document.createElement("label");
+        const name = document.createElement("span");
+        name.textContent = p.name;
+        const box = document.createElement("compost-number-box");
+        box.setAttribute("aria-label", p.name);
+        box.setAttribute("min", String(p.min));
+        box.setAttribute("max", String(p.max));
+        box.setAttribute("reset-value", String(p.default));
+        if (p.flags & STEPPED) box.setAttribute("step", "1");
+        else box.setAttribute("display-fraction-digits", "2");
+        box.setAttribute("value", String(plugin.values.get(p.id) ?? p.default));
+        box.addEventListener("parameter-edit", (e) => plugin.param(p.id, e.detail.value));
+        row.append(name, box);
+        strip.querySelector(".params").append(row);
+        boxes.set(p.id, box);
+    }
+    // The plug-in's own changes (its interface, its automation) and loaded presets move the numbers.
+    const follow = (e) => {
+        const box = boxes.get(e.detail.id);
+        if (box) box.value = e.detail.value;
+    };
+    plugin.addEventListener("param", follow);
+    plugin.addEventListener("value", follow);
+
+    // Its own presets, if it has any.
+    const presets = await plugin.presets();
+    const menu = strip.querySelector("select");
+    if (presets.length) {
+        menu.hidden = false;
+        menu.add(new Option("Presets…", ""));
+        presets.forEach((p, i) => menu.add(new Option(p.name, String(i))));
+        menu.onchange = () => menu.value && plugin.loadPreset(presets[Number(menu.value)]);
+    }
+
+    // Its own interface, in a window of its own.
+    let win;
+    strip.querySelector("header button").onclick = async () => {
+        if (!win) {
+            win = document.createElement("compost-window");
+            win.setAttribute("heading", plugin.descriptor.name);
+            win.setAttribute("x", String(120 + 40 * chain.plugins.indexOf(plugin)));
+            win.setAttribute("y", String(120 + 40 * chain.plugins.indexOf(plugin)));
+            const ui = document.createElement("div");
+            win.append(ui);
+            document.body.append(win);
+            win.open = true;
+            win.setContentSize(680, 420);
+            await plugin.showInterface(ui);   // fits itself to the window's width
+            new ResizeObserver(() => win.setContentSize(win.contentSize.width, ui.offsetHeight)).observe(ui);
+        } else win.open = true;
+    };
+}
+
+document.querySelector("#tempo").addEventListener("parameter-edit", (e) => (chain.transport.tempo = e.detail.value));
+const piano = document.querySelector("compost-piano");
+piano.addEventListener("note-down", (e) => chain.noteOn(e.detail.note, 0.8));
+piano.addEventListener("note-up", (e) => chain.noteOff(e.detail.note));
+status.textContent = "hold a chord on the piano; drag the numbers; bypass; open an interface";
+</script>
+<script type="module" src="common.js"></script>
+</body>
+</html>

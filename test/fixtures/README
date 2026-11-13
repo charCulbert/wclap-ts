@@ -1,0 +1,26 @@
+The plug-ins the tests load: where each comes from, its licence, and why it's here.
+
+PICOH-101.wclap.tar.gz
+    github.com/charCulbert/picoh-101 (MIT), synth/ built by tools/build-wclap.
+    Shared imported memory, with the exports a second instance needs.
+
+HeadlessGain.wclap.tar.gz
+    github.com/charCulbert/char-clap-template (MIT), examples/effect-headless, an older build.
+    The module's own memory, not shared; no interface.
+
+Tapa.wclap.tar.gz
+    github.com/charCulbert/Tapa, via github.com/charCulbert/char-wclaps: ISC in this build; MIT in later releases.
+    Has presets. Built on the CLAP helpers, which check every call is on the thread CLAP requires.
+
+HeavyMain.wclap.tar.gz
+    heavy-main/ here (MIT), from char-clap-template; its third-party notices are in heavy-main/THIRD_PARTY_NOTICES.md.
+    Heavy main-thread work, for the threading tests.
+
+Spawner.wasm
+    spawner/ here (MIT), built by spawner/build.sh.
+    Starts its own thread with pthread_create.
+
+Hive (not in the repo)
+    github.com/andremichelle/open-webclap, ports/hive (CC0-1.0); its bundle's page files are open-webclap's MIT code.
+    test/fetch-fixture.ts fetches it, pinned to a commit and checksum, into .cache/.
+    A host-synced note sequencer: notes passed down a chain, and the transport.

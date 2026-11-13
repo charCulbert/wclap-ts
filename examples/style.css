@@ -1,0 +1,119 @@
+:root {
+    --bg: #f3f5f6;
+    --paper: #ffffff;
+    --ink: #1b2328;
+    --muted: #55626b;
+    --line: #d6dde2;
+    --accent: #2f5f9e;
+    color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #12171b;
+        --paper: #1a2126;
+        --ink: #e3e9ed;
+        --muted: #9aa8b2;
+        --line: #2e3840;
+        --accent: #8db4ea;
+    }
+}
+* {
+    box-sizing: border-box;
+}
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font:
+        16px / 1.5 system-ui,
+        sans-serif;
+}
+main {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+    display: grid;
+    gap: 16px;
+}
+h1 {
+    margin: 0;
+    font-size: 1.6rem;
+}
+p {
+    margin: 0;
+}
+.muted {
+    color: var(--muted);
+}
+button,
+select,
+input {
+    font: inherit;
+}
+button {
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+button.primary {
+    background: var(--accent);
+    color: var(--paper);
+    border-color: var(--accent);
+}
+.bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+.panel {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    min-height: 60px;
+    overflow: hidden;
+}
+.wclap-panel {
+    display: grid;
+    gap: 6px;
+}
+.wclap-panel label {
+    display: grid;
+    grid-template-columns: 10rem 1fr 6rem;
+    gap: 10px;
+    align-items: center;
+    font-size: 0.9rem;
+}
+.wclap-panel output {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+#status {
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    color: var(--muted);
+    white-space: pre-wrap;
+}
+details {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 14px;
+}
+details pre {
+    overflow-x: auto;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    margin: 10px 0 0;
+}
+compost-piano {
+    display: block;
+}
+nav a {
+    margin-right: 14px;
+    color: var(--accent);
+}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mix · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<style>
+    .strips { display: flex; flex-wrap: wrap; gap: 24px; }
+    .strip { display: grid; gap: 8px; justify-items: center; }
+</style>
+</head>
+<body>
+<main>
+    <nav><a href="index.html">Examples</a></nav>
+    <h1>Mix: two tracks and a send</h1>
+    <p class="muted">Tapa on one track, Hive into PICOH-101 on the other, both sending to Slide. The tracks are latency-compensated; the pattern is scheduled ahead on one clock.</p>
+    <div class="bar"><button id="start" class="primary" type="button">Start</button></div>
+    <div class="strips">
+        <div class="strip"><strong>Drums</strong>
+            <compost-knob id="drums-fader" parameter-id="drums-fader" label="Level" min="0" max="1" value="0.9"></compost-knob>
+            <compost-knob id="drums-send" parameter-id="drums-send" label="Send" min="0" max="1" value="0.2"></compost-knob></div>
+        <div class="strip"><strong>Synth</strong>
+            <compost-knob id="synth-fader" parameter-id="synth-fader" label="Level" min="0" max="1" value="0.7"></compost-knob>
+            <compost-knob id="synth-send" parameter-id="synth-send" label="Send" min="0" max="1" value="0.5"></compost-knob></div>
+    </div>
+    <p id="status"></p>
+    <details><summary>The code for this page</summary><pre id="source"></pre></details>
+</main>
+<script type="module" src="/dist/examples/mix.js"></script>
+</body>
+</html>

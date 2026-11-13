@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js" } }</script>
+</head>
+<body>
+<main>
+    <h1>Getting started</h1>
+    <p class="lead">WCLAP audio plug-ins (CLAP compiled to WebAssembly) on your own web page. This site is a plain project that installs wclap-ts the way yours would; each example below is one HTML file with its code shown underneath, ready to copy.</p>
+
+    <h2>1. Install</h2>
+<pre class="block">npm install github:charCulbert/wclap-ts</pre>
+    <p class="muted">The library starts its AudioWorklet and Workers from the files beside it in <code>node_modules/wclap-ts/dist/</code>, so there is nothing to copy as long as your server serves <code>node_modules</code>.</p>
+
+    <h2>2. Serve</h2>
+    <p>Plug-ins use shared memory, which browsers allow only on a cross-origin-isolated page. Send these two headers from your server:</p>
+<pre class="block">Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp</pre>
+    <p>Where you can't (GitHub Pages, a plain static server), a service worker adds them. It has to sit beside your pages, so copy it there once, and call <code>await isolate()</code> first; the page reloads once. These examples do that, so any static server works:</p>
+<pre class="block">npx wclap-ts setup --sw .   # copies wclap-sw.js here
+npm start                   # a plain static server (serve.mjs), then open http://127.0.0.1:8160/</pre>
+
+    <h2>3. Import</h2>
+    <p>With a bundler (Vite, esbuild…), <code>import { loadWclap } from "wclap-ts"</code> works. Without one, an import map does it, as in these pages:</p>
+<pre class="block">&lt;script type="importmap"&gt;{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js" } }&lt;/script&gt;</pre>
+    <p class="muted">If your bundler moves the library and leaves its <code>dist/</code> files behind, copy them to a folder you serve (<code>npx wclap-ts setup public/wclap</code>) and pass <code>base: "/wclap/"</code>.</p>
+
+    <h2>4. The examples</h2>
+    <div class="cards">
+        <a href="01-one-plugin.html"><strong>1 · One plug-in</strong>A synth with its own interface, a piano, parameter events, saving its sound.</a>
+        <a href="02-chain.html"><strong>2 · A chain</strong>Sequencer → synth → delay in one node; bypass and tempo while it plays.</a>
+        <a href="03-ab.html"><strong>3 · A/B</strong>Two synths, every note on the same frame, switched with a crossfade.</a>
+        <a href="04-effect-and-automation.html"><strong>4 · Effect and automation</strong>Any Web Audio source into an effect, a generated parameter panel, a sample-accurate sweep.</a>
+        <a href="05-midi.html"><strong>5 · MIDI</strong>MIDI keyboards in, a mod wheel mapped to a parameter, notes coming out.</a>
+        <a href="06-offline-render.html"><strong>6 · Render to a file</strong>The same API offline: a synth's sequence rendered faster than real time to a WAV.</a>
+        <a href="07-own-graph.html"><strong>7 · Your own graph</strong>A kick and an acid bassline on a shared transport, routed by your own AudioWorklet module: a send bus and latency compensation.</a>
+        <a href="08-synth-in-a-window.html"><strong>8 · A synth in a window</strong>With compost: its interface in a draggable window, a piano, a meter and a scope.</a>
+        <a href="09-rack.html"><strong>9 · A rack</strong>With compost: a strip of number boxes per plug-in, every parameter, kept in sync both ways, bypass switches, interfaces in windows.</a>
+    </div>
+
+    <h2>The shape of it</h2>
+<pre class="block">import { loadWclap, createChain, createHost, isolate } from "wclap-ts";
+
+await isolate();                                             // only without the headers
+const context = new AudioContext();                          // after a click
+const synth = await loadWclap(context, "/plugins/MySynth.wclap.tar.gz", { ui: document.querySelector("#ui") });
+synth.connect(context.destination);
+synth.noteOn(60, 0.8);                                       // or at an exact AudioContext time
+synth.addEventListener("param", (e) => console.log(e.detail));
+
+const chain = await createChain(context);                    // several plug-ins in series, one node
+await chain.add("/plugins/Arp.wclap.tar.gz");
+await chain.add("/plugins/MySynth.wclap.tar.gz");</pre>
+    <p class="muted">The examples load PICOH-101, Pro54, Slide and Tapa straight from GitHub (<a href="https://github.com/charCulbert/char-wclaps">charCulbert/char-wclaps</a>): any URL that allows cross-origin requests works. Hive, a note sequencer, comes from <a href="https://github.com/andremichelle/open-webclap">andremichelle/open-webclap</a>, and a test gain plug-in (from <a href="https://github.com/charCulbert/char-clap-template">char-clap-template</a>, MIT) is in <code>plugins/</code> here. Pro54 is Cmajor's example synth, GPL-3.0, loaded from its own URL and not included here. Swap in your own <code>.wclap.tar.gz</code> files.</p>
+</main>
+<script type="module" src="common.js"></script>
+</body>
+</html>

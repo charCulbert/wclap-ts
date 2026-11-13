@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A/B · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<style>
+    .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .side { display: grid; gap: 8px; min-width: 0; }
+    @media (max-width: 700px) { .sides { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+    <nav><a href="index.html">Examples</a></nav>
+    <h1>A/B</h1>
+    <p class="muted">Two synths get every note on the same frame. Switch between them with the buttons or the space bar.</p>
+    <div class="bar">
+        <button id="start" class="primary" type="button">Start</button>
+        <button id="a" type="button">A</button>
+        <button id="b" type="button">B</button>
+    </div>
+    <div class="sides">
+        <div class="side"><compost-meter id="meter-a" label="A level"></compost-meter><div id="ui-a" class="panel"></div></div>
+        <div class="side"><compost-meter id="meter-b" label="B level"></compost-meter><div id="ui-b" class="panel"></div></div>
+    </div>
+    <compost-piano root-note="48" note-count="25" inline></compost-piano>
+    <p id="status"></p>
+    <details><summary>The code for this page</summary><pre id="source"></pre></details>
+</main>
+<script type="module" src="/dist/examples/ab.js"></script>
+</body>
+</html>

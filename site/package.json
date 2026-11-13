@@ -1,0 +1,14 @@
+{
+    "name": "wclap-ts-site",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "setup": "wclap-ts setup --sw .",
+        "start": "node serve.mjs"
+    },
+    "dependencies": {
+        "compost": "github:charCulbert/compost",
+        "wclap-ts": "file:.."
+    },
+    "description": "The wclap-ts website: getting started and the examples, each a page you can copy."
+}

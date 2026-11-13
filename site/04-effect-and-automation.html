@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Effect and automation · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js" } }</script>
+</head>
+<body>
+<main>
+    <h1>An effect, its parameters, and automation</h1>
+    <p class="lead">An effect fed by any Web Audio source (here an oscillator). This plug-in has no interface of its own, so wclap-ts builds a panel from its parameters. "Automate" schedules a sweep, each step on its exact audio frame.</p>
+    <div class="demo">
+    <div class="bar">
+    <button id="start" class="primary">Start</button>
+    <button id="automate">Automate the gain</button>
+    </div>
+    <div id="ui" class="ui"></div>
+    <p class="status"></p>
+    </div>
+</main>
+<script type="module" id="example">
+import { isolate, loadWclap } from "wclap-ts";
+
+// Shared memory needs a cross-origin-isolated page. Where the server can't send the two headers, a service worker
+// adds them (the page reloads once, the first time).
+await isolate();
+const status = document.querySelector(".status");
+
+// Browsers start audio only after a click.
+await new Promise((resolve) => (document.querySelector("#start").onclick = resolve));
+const context = new AudioContext();
+const effect = await loadWclap(context, "/plugins/HeadlessGain.wclap.tar.gz", {
+    ui: document.querySelector("#ui"),   // no interface of its own: a generated panel
+});
+effect.connect(context.destination);
+
+// Any Web Audio source into the plug-in's input.
+const tone = new OscillatorNode(context, { type: "sawtooth", frequency: 110 });
+tone.connect(new GainNode(context, { gain: 0.15 })).connect(effect.input);
+tone.start();
+
+// Its parameters: id, name, range, default.
+const gain = effect.params[0];
+status.textContent = effect.params.map((p) => `${p.name} [${p.min}..${p.max}]`).join(", ");
+
+// Automation: values at AudioContext times, each landing on its frame.
+document.querySelector("#automate").onclick = () => {
+    const start = context.currentTime + 0.05;
+    for (let i = 0; i <= 40; i++) {
+        const t = i / 40;
+        const value = gain.min + (gain.max - gain.min) * (0.5 - 0.5 * Math.cos(t * 2 * Math.PI));
+        effect.param(gain.id, value, start + t * 2);
+    }
+    status.textContent = `sweeping ${gain.name} over 2 s`;
+};
+</script>
+<script type="module" src="common.js"></script>
+</body>
+</html>

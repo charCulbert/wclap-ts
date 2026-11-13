@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One plug-in · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+    <nav><a href="index.html">Examples</a></nav>
+    <h1>One plug-in</h1>
+    <p class="muted">PICOH-101 with its own interface. Play the keyboard, your computer keys, or a MIDI keyboard.</p>
+    <div class="bar">
+        <button id="start" class="primary" type="button">Start</button>
+        <button id="midi" type="button">Connect MIDI</button>
+        <select id="presets" hidden aria-label="Presets"></select>
+    </div>
+    <div id="ui" class="panel"></div>
+    <compost-piano root-note="48" note-count="25" inline></compost-piano>
+    <p id="status"></p>
+    <details><summary>The code for this page</summary><pre id="source"></pre></details>
+</main>
+<script type="module" src="/dist/examples/one.js"></script>
+</body>
+</html>

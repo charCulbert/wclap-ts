@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Render to a file · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js" } }</script>
+</head>
+<body>
+<main>
+    <h1>Render to a WAV file</h1>
+    <p class="lead">The same API on an OfflineAudioContext renders faster than real time: here one synth playing a short sequence, written out as a WAV you can download. No Start click needed, since nothing plays aloud.</p>
+    <div class="demo">
+    <div class="bar">
+    <button id="render" class="primary">Render 8 seconds</button>
+    <a id="download" hidden download="sequence.wav">Download the WAV</a>
+    </div>
+    <p class="status"></p>
+    </div>
+</main>
+<script type="module" id="example">
+import { isolate, loadWclap } from "wclap-ts";
+
+// Shared memory needs a cross-origin-isolated page. Where the server can't send the two headers, a service worker
+// adds them (the page reloads once, the first time).
+await isolate();
+const status = document.querySelector(".status");
+// Plug-ins load from any URL that allows it (CORS): these from GitHub, charCulbert/char-wclaps.
+const WCLAPS = "https://raw.githubusercontent.com/charCulbert/char-wclaps/main/";
+
+document.querySelector("#render").onclick = async () => {
+    const seconds = 8;
+    const context = new OfflineAudioContext({ numberOfChannels: 2, length: seconds * 48000, sampleRate: 48000 });
+    const synth = await loadWclap(context, WCLAPS + "PICOH-101.wclap.tar.gz");
+    synth.connect(context.destination);
+
+    // A sequence, scheduled up front in AudioContext time: eight notes, an eighth note each at 120 bpm, looped.
+    const notes = [48, 55, 60, 55, 51, 55, 58, 55];
+    const step = 0.25;
+    for (let i = 0; i * step < seconds - 0.5; i++) {
+        synth.noteOn(notes[i % notes.length], 0.8, i * step);
+        synth.noteOff(notes[i % notes.length], 0, i * step + step * 0.8);
+    }
+
+    status.textContent = "rendering…";
+    const started = performance.now();
+    const audio = await context.startRendering();
+    status.textContent = `${seconds} s rendered in ${Math.round(performance.now() - started)} ms`;
+    await synth.destroy();   // an offline context's host is done once it has rendered
+
+    const link = document.querySelector("#download");
+    link.href = URL.createObjectURL(wav(audio));
+    link.hidden = false;
+};
+
+// 16-bit stereo WAV from an AudioBuffer.
+function wav(audio) {
+    const frames = audio.length;
+    const bytes = new DataView(new ArrayBuffer(44 + frames * 4));
+    const text = (at, s) => [...s].forEach((c, i) => bytes.setUint8(at + i, c.charCodeAt(0)));
+    text(0, "RIFF"); bytes.setUint32(4, 36 + frames * 4, true); text(8, "WAVEfmt ");
+    bytes.setUint32(16, 16, true); bytes.setUint16(20, 1, true); bytes.setUint16(22, 2, true);
+    bytes.setUint32(24, audio.sampleRate, true); bytes.setUint32(28, audio.sampleRate * 4, true);
+    bytes.setUint16(32, 4, true); bytes.setUint16(34, 16, true); text(36, "data"); bytes.setUint32(40, frames * 4, true);
+    const [left, right] = [audio.getChannelData(0), audio.getChannelData(1)];
+    for (let i = 0; i < frames; i++)
+        for (const [c, data] of [[0, left], [1, right]])
+            bytes.setInt16(44 + i * 4 + c * 2, Math.max(-1, Math.min(1, data[i])) * 0x7fff, true);
+    return new Blob([bytes], { type: "audio/wav" });
+}
+</script>
+<script type="module" src="common.js"></script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIDI · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js", "compost/": "/node_modules/compost/src/" } }</script>
+</head>
+<body>
+<main>
+    <h1>MIDI in and out</h1>
+    <p class="lead">Every connected MIDI keyboard plays the sequencer, each note timed from when it arrived. CC 1 (the mod wheel) is mapped to the synth's first parameter. A note sequencer's notes come out as events: here they're listed and played on a separate synth; <code>connectMidiOut(output)</code> would send them to a MIDI device.</p>
+    <div class="demo">
+    <div class="bar">
+    <button id="start" class="primary">Start</button>
+    <button id="midi">Connect MIDI</button>
+    </div>
+    <compost-piano root-note="48" note-count="25" inline></compost-piano>
+    <pre class="log" id="notes"></pre>
+    <p class="status"></p>
+    </div>
+</main>
+<script type="module" id="example">
+import "compost/components/compost-piano.js";
+import { createChain, isolate, loadWclap } from "wclap-ts";
+
+// Shared memory needs a cross-origin-isolated page. Where the server can't send the two headers, a service worker
+// adds them (the page reloads once, the first time).
+await isolate();
+const status = document.querySelector(".status");
+// Plug-ins load from any URL that allows it (CORS): these from GitHub, charCulbert/char-wclaps.
+const WCLAPS = "https://raw.githubusercontent.com/charCulbert/char-wclaps/main/";
+// Hive, a note sequencer (CC0-1.0), from github.com/andremichelle/open-webclap, pinned to a commit.
+const HIVE = "https://raw.githubusercontent.com/andremichelle/open-webclap/b430912ae8fa21b42b10ab6d0bf22c6c541c7c36/site/public/bundled/hive.wclap.tar.gz";
+
+// Browsers start audio only after a click.
+await new Promise((resolve) => (document.querySelector("#start").onclick = resolve));
+const context = new AudioContext();
+// The sequencer alone in a chain: its notes are what leaves the chain.
+const sequencer = await createChain(context);
+await sequencer.add(HIVE);
+// It makes no sound, but a Web Audio node only runs while connected toward the output: connect it silently.
+sequencer.connect(new GainNode(context, { gain: 0 })).connect(context.destination);
+// A synth on its own, played by those notes.
+const synth = await loadWclap(context, WCLAPS + "PICOH-101.wclap.tar.gz");
+synth.connect(context.destination);
+
+// Your playing (the piano, or MIDI once connected) goes into the sequencer.
+const piano = document.querySelector("compost-piano"); // it plays from the computer keyboard too
+piano.addEventListener("note-down", (e) => sequencer.noteOn(e.detail.note, 0.8));
+piano.addEventListener("note-up", (e) => sequencer.noteOff(e.detail.note));
+document.querySelector("#midi").onclick = async () => {
+    await sequencer.connectMidi();                  // every MIDI input plays it
+    synth.host.mapCC(1, synth, synth.params[0].id);   // mod wheel → the synth's first parameter
+    await synth.connectMidi();                        // (the synth hears the mod wheel)
+    status.textContent = `MIDI connected; CC 1 moves ${synth.params[0].name}`;
+    // sequencer.connectMidiOut(output) would also send its notes to a MIDI device.
+};
+
+// Notes leaving the sequencer: logged, and played on the synth.
+const log = document.querySelector("#notes");
+sequencer.addEventListener("noteout", (e) => {
+    const { on, key, velocity, time } = e.detail;
+    if (on) synth.noteOn(key, velocity);
+    else synth.noteOff(key);
+    log.textContent = `${on ? "on " : "off"} ${key} at ${time.toFixed(3)} s\n${log.textContent}`.slice(0, 2000);
+});
+status.textContent = "play the piano, or connect a MIDI keyboard";
+</script>
+<script type="module" src="common.js"></script>
+</body>
+</html>
