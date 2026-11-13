@@ -9,13 +9,13 @@ import { Instance } from "../src/plugin/wasm-instance.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
 import { Chain } from "../src/worklet/chain.ts";
 import type { Processor } from "../src/worklet/plugin-runner.ts";
-import { fetchFixture, HIVE } from "./fetch-fixture.ts";
+import { fetchFixture, HIVE, OUTSIDE_FIXTURES } from "./fetch-fixture.ts";
 
 const load = async (name: string) => {
-    const bytes =
-        name === "Hive"
-            ? await fetchFixture(HIVE)
-            : readFileSync(new URL(`fixtures/${name}.wclap.tar.gz`, import.meta.url));
+    const outside = name === "Hive" ? HIVE : OUTSIDE_FIXTURES.find((f) => f.name === name);
+    const bytes = outside
+        ? await fetchFixture(outside)
+        : readFileSync(new URL(`fixtures/${name}.wclap.tar.gz`, import.meta.url));
     const bundle = await openBundle(bytes);
     const instance = Instance.create(bundle, { log: () => undefined });
     const plugin = Plugin.create(instance, instance.plugins()[0]?.id ?? "", () => undefined);
@@ -368,4 +368,78 @@ test("a plug-in brought back from bypass is reset before it plays again", () => 
     chain.render(128, 128, stereo(), stereo());
     chain.render(256, 128, stereo(), stereo());
     assert.equal(resets, 1);
+});
+
+test("a real plug-in takes a parameter change by flush while bypassed, and plays with it when brought back", async () => {
+    const { chain, queue, ids } = await chainOf("HeadlessGain");
+    const id = ids[0] ?? 0;
+    chain.setEnabled(id, false);
+    queue.push(0, { type: "param", id: 0, value: -6.020599913 }, id);
+    const out = stereo();
+    chain.render(0, 128, [[sine, sine]], out);
+    chain.render(128, 128, [[sine, sine]], out);
+    assert.ok(
+        out[0]?.[0]?.every((v, i) => v === sine[i]),
+        "dry while bypassed",
+    );
+    chain.setEnabled(id, true);
+    chain.render(256, 128, [[sine, sine]], out);
+    chain.render(384, 128, [[sine, sine]], out);
+    assert.ok(
+        out[0]?.[0]?.every((v, i) => Math.abs(v - 0.5 * (sine[i] ?? 0)) < 1e-6),
+        "at the gain it was given while bypassed",
+    );
+});
+
+test("a real delay brought back from bypass starts clean: no echo of what it heard before", async () => {
+    // Plays a tone into the delay, bypasses it, brings it back, then listens to silence for longer than its echo.
+    const run = async (withReset: boolean) => {
+        const { chain, ids } = await chainOf("openrb-delay");
+        const id = ids[0] ?? 0;
+        const slot = chain.slots[0];
+        assert.ok(slot);
+        if (!withReset) {
+            const p = slot.processor;
+            slot.processor = {
+                output: p.output,
+                process: p.process.bind(p),
+                ...(p.flush ? { flush: p.flush.bind(p) } : {}),
+                ...(p.idle ? { idle: p.idle.bind(p) } : {}),
+            };
+        }
+        const silence = [[new Float32Array(128), new Float32Array(128)]];
+        let block = 0;
+        const render = (input: typeof silence) => {
+            const out = stereo();
+            chain.render(block++ * 128, 128, input, out);
+            return out;
+        };
+        for (let b = 0; b < 40; b++) render([[sine, sine]]);
+        chain.setEnabled(id, false);
+        render(silence);
+        render(silence);
+        chain.setEnabled(id, true);
+        let peak = 0;
+        for (let b = 0; b < 1500; b++)
+            for (const v of render(silence)[0]?.[0] ?? []) peak = Math.max(peak, Math.abs(v));
+        return peak;
+    };
+    assert.ok((await run(false)) > 0.1, "without a reset its echo comes back");
+    // What's left is a filter's last trace, around -115 dB.
+    assert.ok((await run(true)) < 1e-4);
+});
+
+test("a sequencer sends no notes while the transport is stopped", async () => {
+    const notes = async (playing: boolean) => {
+        const { chain } = await chainOf("Hive");
+        chain.transport.playing = playing;
+        let count = 0;
+        chain.onNotesOut = (_start, _notes, n) => {
+            count += n;
+        };
+        for (let b = 0; b < 400; b++) chain.render(b * 128, 128, [], stereo());
+        return count;
+    };
+    assert.ok((await notes(true)) > 0);
+    assert.equal(await notes(false), 0);
 });
