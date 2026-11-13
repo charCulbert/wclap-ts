@@ -1,26 +1,52 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { capMemory } from "../src/page/wclap-host.ts";
 import {
+    CLAP_CORE_EVENT_SPACE_ID,
+    CLAP_EVENT_MIDI,
+    CLAP_EVENT_NOTE_ON,
+    CLAP_EVENT_PARAM_GESTURE_BEGIN,
+    CLAP_EVENT_PARAM_GESTURE_END,
+    CLAP_EVENT_PARAM_VALUE,
     CLAP_EXT_LATENCY,
     CLAP_EXT_NOTE_NAME,
     CLAP_EXT_PARAMS,
+    CLAP_EXT_STATE,
     CLAP_PARAM_CLEAR_ALL,
+    CLAP_TRANSPORT_IS_PLAYING,
+    clap_event_header,
+    clap_event_midi,
+    clap_event_note,
+    clap_event_param_gesture,
+    clap_event_param_value,
+    clap_event_transport,
+    clap_host,
     clap_host_latency,
     clap_host_note_name,
     clap_host_params,
+    clap_host_state,
+    clap_output_events,
+    clap_process,
 } from "../src/plugin/clap.generated.ts";
+import { PluginAudio } from "../src/plugin/plugin-audio-thread.ts";
 import { PluginMain } from "../src/plugin/plugin-main-thread.ts";
 import { Plugin } from "../src/plugin/plugin-one-thread.ts";
 import { Instance } from "../src/plugin/wasm-instance.ts";
 import { asPtr } from "../src/plugin/wasm-struct.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
+import { fetchFixture, OUTSIDE_FIXTURES } from "./fetch-fixture.ts";
 
 const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}.wclap.tar.gz`, import.meta.url));
+// A bundle from the repo's fixtures, or one fetched (test/fetch-fixture.ts).
+const bytes = (name: string) => {
+    const outside = OUTSIDE_FIXTURES.find((f) => f.name === name);
+    return outside ? fetchFixture(outside) : fixture(name);
+};
 
 const start = async (name: string) => {
     const log: string[] = [];
-    const instance = Instance.create(await openBundle(fixture(name)), { log: (t) => log.push(t) });
+    const instance = Instance.create(await openBundle(await bytes(name)), { log: (t) => log.push(t) });
     const plugin = Plugin.create(instance, instance.plugins()[0]?.id ?? "", (t) => log.push(t));
     plugin.activate(48000, 128);
     return { instance, plugin, log };
@@ -87,7 +113,7 @@ test("main-thread work waits for idle", async () => {
     plugin.destroy();
 });
 
-test("a plug-in's latency, parameter or note-name change reaches onChange at idle, and a restart reports latency", async () => {
+test("a plug-in's latency, parameter, note-name or state change reaches onChange at idle, and a restart reports latency", async () => {
     const instance = Instance.create(await openBundle(fixture("HeadlessGain")));
     const changes: string[] = [];
     const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", { onChange: (w) => changes.push(w) });
@@ -101,12 +127,13 @@ test("a plug-in's latency, parameter or note-name change reaches onChange at idl
     instance.wasm
         .struct(clap_host_params, asPtr(extension.get(CLAP_EXT_PARAMS) ?? 0))
         .call("clear", hostAt, 0, CLAP_PARAM_CLEAR_ALL);
+    instance.wasm.struct(clap_host_state, asPtr(extension.get(CLAP_EXT_STATE) ?? 0)).call("mark_dirty", hostAt);
     assert.deepEqual(changes, [], "nothing until idle");
     main.idle();
-    assert.deepEqual(changes, ["latency", "params", "note-names"]);
+    assert.deepEqual(changes, ["latency", "params", "note-names", "state"]);
     main.restart();
     main.idle();
-    assert.deepEqual(changes.slice(3), ["latency"]);
+    assert.deepEqual(changes.slice(4), ["latency"]);
     main.destroy();
 });
 
@@ -182,4 +209,203 @@ test("a plug-in that checks threads runs and stops without complaint", async () 
         log.filter((line) => /wrong thread/.test(line)),
         [],
     );
+});
+
+test("memory: a shared memory's maximum is capped, never below its initial size", async () => {
+    const synth = await openBundle(fixture("PICOH-101"));
+    assert.deepEqual(capMemory(synth, 64).memory, { initial: 2, maximum: 1024, shared: true });
+    assert.equal(capMemory(synth, 0).memory?.maximum, 2, "at least the initial size");
+    assert.equal(capMemory(synth, 1 << 20).memory?.maximum, 32768, "never above the module's own maximum");
+    const gain = await openBundle(fixture("HeadlessGain"));
+    assert.equal(capMemory(gain, 64), gain, "a module with its own memory is left alone");
+});
+
+test("a block the plug-in reports as an error (CLAP_PROCESS_ERROR) comes out silent", async () => {
+    const { plugin } = await start("process-lifecycle");
+    assert.deepEqual(plugin.ports.outputs, [1, 1]);
+    // Its first two blocks are markers: 0.1, then 0.2 once woken from the main thread.
+    assert.equal(plugin.process(128)[0]?.[0]?.[0], Math.fround(0.1));
+    plugin.idle();
+    assert.equal(plugin.process(128)[0]?.[0]?.[0], Math.fround(0.2));
+    // Key 65 fills both outputs with 9.0 and returns CLAP_PROCESS_ERROR.
+    const out = plugin.process(128, [{ at: 0, type: "note-on", key: 65, velocity: 1 }]);
+    assert.equal(out.length, 2);
+    for (const port of out) assert.ok(port[0]?.every((v) => v === 0));
+    plugin.destroy();
+});
+
+test("the transport is written into each block: play state, time signature, bar, and positions in fixed point", async () => {
+    const instance = Instance.create(await openBundle(fixture("HeadlessGain")));
+    const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", { log: () => undefined });
+    const setup = main.activate(48000, 128);
+    const audio = new PluginAudio(instance.wasm, setup, main.events, main.output, main.thread);
+    const process = instance.wasm.struct(clap_process, asPtr(setup.process));
+    const read = instance.wasm.struct(clap_event_transport, asPtr(setup.transport));
+    const fixed = (v: number) => BigInt(v * 2 ** 31);
+
+    audio.process(128, [], [], 0, { tempo: 90, playing: false, beats: 13.5, numerator: 3, denominator: 4 });
+    assert.equal(process.get("transport"), setup.transport);
+    assert.equal(read.get("flags") & CLAP_TRANSPORT_IS_PLAYING, 0, "stopped");
+    assert.equal(read.get("tempo"), 90);
+    assert.deepEqual([read.get("tsig_num"), read.get("tsig_denom")], [3, 4]);
+    assert.equal(read.get("bar_number"), 4, "three beats a bar: beat 13.5 is in bar 4, from 0");
+    assert.equal(BigInt(read.get("bar_start")), fixed(12));
+    assert.equal(BigInt(read.get("song_pos_beats")), fixed(13.5));
+    assert.equal(BigInt(read.get("song_pos_seconds")), fixed(9), "13.5 beats at 90 BPM");
+
+    audio.process(128, [], [], 0, { tempo: 120, playing: true, beats: 7, seconds: 2, numerator: 6, denominator: 8 });
+    assert.equal(read.get("flags") & CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_PLAYING, "playing");
+    assert.equal(read.get("bar_number"), 2, "6/8 is three quarter notes a bar");
+    assert.equal(BigInt(read.get("bar_start")), fixed(6));
+    assert.equal(BigInt(read.get("song_pos_seconds")), fixed(2), "the seconds given");
+
+    audio.process(128, [], [], 0, { tempo: 120, playing: true, beats: 5 });
+    assert.deepEqual(
+        [read.get("tsig_num"), read.get("tsig_denom"), read.get("bar_number")],
+        [4, 4, 1],
+        "4/4 unless set",
+    );
+
+    audio.process(128);
+    assert.equal(process.get("transport"), 0, "no transport, none passed");
+    audio.stop();
+    main.destroy();
+});
+
+test("a restart the plug-in asks for on one thread happens at idle, and it plays on after", async () => {
+    const instance = Instance.create(await openBundle(fixture("PICOH-101")));
+    const changes: string[] = [];
+    const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", {
+        log: () => undefined,
+        onChange: (w) => changes.push(w),
+    });
+    const plugin = Plugin.wrap(main);
+    plugin.activate(48000, 128);
+    plugin.process(128);
+    plugin.idle();
+    // The plug-in's own clap_host.request_restart: installHost puts the host's functions in the table in order, so
+    // request_restart (second) sits 20 slots before clap_host_latency.changed (twenty-second).
+    const latency = new Map(main.hostExtensions()).get(CLAP_EXT_LATENCY) ?? 0;
+    const changed = instance.wasm.read("u32", latency + clap_host_latency.fields.changed.at) as number;
+    const host = instance.allocStruct(clap_host);
+    host.setIndex("request_restart", changed - 20);
+    host.call("request_restart", host.at);
+    assert.ok(plugin.requests.has("restart"));
+    plugin.idle();
+    assert.ok(!plugin.requests.has("restart"));
+    assert.deepEqual(changes, ["latency"], "a restart reports latency");
+    const left = plugin.process(128, [{ at: 5, type: "note-on", key: 60, velocity: 0.8 }])[0]?.[0];
+    assert.equal(
+        left?.findIndex((v) => v !== 0),
+        5,
+        "processing again",
+    );
+    plugin.destroy();
+});
+
+test("latency and tail: frames, and 0xffffffff for a tail that rings on", async () => {
+    const report = async (name: string) => {
+        const { plugin } = await start(name);
+        const values = [plugin.main.latency(), plugin.main.tail()];
+        plugin.destroy();
+        return values;
+    };
+    assert.equal((await report("Tapa"))[0], 24);
+    assert.equal((await report("pearls"))[1], 0xffffffff);
+    assert.equal((await report("openrb-delay"))[1], 292883);
+    assert.deepEqual(await report("HeadlessGain"), [0, 0], "none reported");
+});
+
+test("events a plug-in sends out: CLAP and MIDI notes, its own parameter values and gestures; the rest dropped", async () => {
+    const instance = Instance.create(await openBundle(fixture("HeadlessGain")));
+    const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", { log: () => undefined });
+    const setup = main.activate(48000, 128);
+    const process = instance.wasm.struct(clap_process, asPtr(setup.process));
+    const list = instance.wasm.struct(clap_output_events, asPtr(process.get("out_events")));
+    const at = instance.alloc(64);
+    const header = (size: number, time: number, type: number, space = CLAP_CORE_EVENT_SPACE_ID) => {
+        instance.wasm.bytes.fill(0, at, at + 64);
+        const h = instance.wasm.struct(clap_event_header, asPtr(at));
+        h.set("size", size);
+        h.set("time", time);
+        h.set("space_id", space);
+        h.set("type", type);
+    };
+    const push = () => list.call("try_push", list.at, asPtr(at));
+    const midi = (time: number, status: number, key: number, velocity: number) => {
+        header(clap_event_midi.size, time, CLAP_EVENT_MIDI);
+        instance.wasm.bytes.set([status, key, velocity], at + clap_event_midi.fields.data.at);
+        return push();
+    };
+    main.output.count = 0;
+    assert.ok(midi(1, 0x93, 64, 127), "a MIDI note-on, channel 4");
+    assert.ok(midi(2, 0x93, 64, 0), "a MIDI note-on at velocity 0");
+    assert.ok(midi(3, 0x82, 62, 0), "a MIDI note-off");
+    assert.ok(midi(4, 0xb0, 1, 100), "a control change, accepted");
+
+    header(clap_event_note.size, 5, CLAP_EVENT_NOTE_ON);
+    const note = instance.wasm.struct(clap_event_note, asPtr(at));
+    note.set("channel", 1);
+    note.set("key", 48);
+    note.set("velocity", 0.5);
+    assert.ok(push());
+
+    header(clap_event_param_value.size, 6, CLAP_EVENT_PARAM_VALUE);
+    const param = instance.wasm.struct(clap_event_param_value, asPtr(at));
+    param.set("param_id", 7);
+    param.set("value", 0.25);
+    assert.ok(push());
+    for (const [time, type] of [
+        [7, CLAP_EVENT_PARAM_GESTURE_BEGIN],
+        [8, CLAP_EVENT_PARAM_GESTURE_END],
+    ] as const) {
+        header(clap_event_param_gesture.size, time, type);
+        instance.wasm.struct(clap_event_param_gesture, asPtr(at)).set("param_id", 7);
+        assert.ok(push());
+    }
+    header(clap_event_note.size, 9, CLAP_EVENT_NOTE_ON, CLAP_CORE_EVENT_SPACE_ID + 1);
+    assert.ok(push(), "another event space, accepted");
+
+    const got = main.output.events.slice(0, main.output.count).map((e) => {
+        if (e.type === "note-on" || e.type === "note-off") return [e.at, e.type, e.channel, e.key, e.velocity];
+        if (e.type === "param") return [e.at, e.type, e.id, e.value];
+        return [e.at, e.type, "id" in e ? e.id : -1];
+    });
+    assert.deepEqual(got, [
+        [1, "note-on", 3, 64, 1],
+        [2, "note-off", 3, 64, 0],
+        [3, "note-off", 2, 62, 0],
+        [5, "note-on", 1, 48, 0.5],
+        [6, "param", 7, 0.25],
+        [7, "gesture-begin", 7],
+        [8, "gesture-end", 7],
+    ]);
+    main.destroy();
+});
+
+test("an interface with several files: opened in order, files served, messages both ways only while it shows", async () => {
+    const instance = Instance.create(await openBundle(await bytes("gui-lifecycle")));
+    const replies: number[][] = [];
+    const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", {
+        log: () => undefined,
+        onInterfaceMessage: (b) => replies.push([...b]),
+    });
+    assert.equal(main.sendToInterface(new Uint8Array([1])), false, "refused before it shows");
+    const info = main.openInterface();
+    assert.deepEqual(info, { uri: "/ui/index.html", width: 400, height: 260, resizable: false });
+    const text = (path: string) => {
+        const r = main.getResource(path);
+        return r && [r.mime, new TextDecoder().decode(r.bytes)];
+    };
+    assert.equal(text("/ui/index.html")?.[0], "text/html");
+    assert.equal(text("/ui/style.css")?.[0], "text/css");
+    assert.equal(text("/ui/main.js")?.[0], "text/javascript");
+    assert.deepEqual(text("/ui/message.txt"), ["text/plain", "Multi-file resources ready.\n"]);
+    // The page sends 1 once its files have loaded; the plug-in answers [1, 1], accepted.
+    assert.equal(main.sendToInterface(new Uint8Array([1])), true);
+    assert.deepEqual(replies, [[1, 1]]);
+    main.closeInterface();
+    assert.equal(main.sendToInterface(new Uint8Array([1])), false, "refused once hidden");
+    assert.deepEqual(replies, [[1, 1]]);
+    main.destroy();
 });
