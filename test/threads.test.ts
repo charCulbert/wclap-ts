@@ -8,7 +8,7 @@ import { Plugin } from "../src/plugin/plugin-one-thread.ts";
 import type { Event } from "../src/plugin/plugin-types.ts";
 import { canAttach, Instance } from "../src/plugin/wasm-instance.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
-import { State } from "../src/threads/control-block.ts";
+import { Control, State } from "../src/threads/control-block.ts";
 import { AudioSide, MainThread } from "../src/threads/two-threads.ts";
 
 const transport = { tempo: 120, playing: true, beats: 0 };
@@ -63,6 +63,64 @@ test("stop leaves the plug-in alone when the audio side never confirms", async (
     const { main } = MainThread.start(options, quiet);
     assert.equal(await main.stop(50), false);
     assert.equal(main.control.state, State.stopping);
+});
+
+test("a bypassed audio side answers a stop at idle; a throw while processing marks the plug-in failed", async () => {
+    const bundle = await fixture("PICOH-101");
+    const options = { module: bundle.module, memory: bundle.memory, sampleRate: 48000, maxFrames: 128 };
+    const { main, started } = MainThread.start(options, quiet);
+    const audio = new AudioSide(started.audio, () => undefined);
+    audio.process(128, [], [], 0, transport);
+    audio.idle();
+    assert.equal(main.control.state, State.active, "idle leaves an active plug-in alone");
+    main.control.state = State.stopping;
+    audio.idle();
+    assert.equal(main.control.state, State.stopped);
+    assert.ok(!audio.audio.processing, "it stopped processing");
+
+    main.control.state = State.active;
+    assert.throws(() => audio.process(256, [], [], 0, transport), /more than the 128 activated/);
+    assert.equal(main.control.state, State.failed);
+    assert.throws(() => main.check(), /failed on the audio thread/);
+});
+
+test("stop when the audio thread is done for good: no handshake, and the plug-in is destroyed", async () => {
+    const bundle = await fixture("PICOH-101");
+    const options = { module: bundle.module, memory: bundle.memory, sampleRate: 48000, maxFrames: 128 };
+    const { main } = MainThread.start(options, quiet);
+    let destroyed = 0;
+    const destroy = main.plugin.destroy.bind(main.plugin);
+    main.plugin.destroy = () => {
+        destroyed++;
+        destroy();
+    };
+    void main.serve();
+    const begin = Date.now();
+    assert.equal(await main.stop(5000, true), true);
+    assert.ok(Date.now() - begin < 1000, "without waiting for the audio side");
+    assert.equal(destroyed, 1);
+});
+
+test("without Atomics.waitAsync the control block polls: requests and state changes still arrive", async () => {
+    const waitAsync = Atomics.waitAsync;
+    delete (Atomics as { waitAsync?: unknown }).waitAsync;
+    try {
+        const control = Control.create();
+        const begin = Date.now();
+        await control.waitForRequest(5000);
+        assert.ok(Date.now() - begin < 1000, "a poll returns soon, whatever the timeout");
+        control.request("callback");
+        await control.waitForRequest(5000);
+        assert.deepEqual(control.take(), ["callback"]);
+
+        setTimeout(() => {
+            control.state = State.stopped;
+        }, 30);
+        assert.equal(await control.untilState(State.stopped, 2000), true);
+        assert.equal(await control.untilState(State.active, 50), false, "and times out");
+    } finally {
+        Atomics.waitAsync = waitAsync;
+    }
 });
 
 const fixture = (name: string) => openBundle(readFileSync(new URL(`fixtures/${name}.wclap.tar.gz`, import.meta.url)));
