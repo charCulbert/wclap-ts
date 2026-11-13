@@ -23,8 +23,9 @@ const NAMES = [
     "path_unlink_file",
 ];
 
-// A module that imports the WASI functions, so wasiImports has something to answer. Its types are never used.
-const moduleWith = (names: string[]) => {
+// A module that imports the WASI functions, so wasiImports has something to answer (a [module, name] pair imports
+// from another module). Its types are never used.
+const moduleWith = (names: (string | [string, string])[]) => {
     const uleb = (value: number) => {
         const out: number[] = [];
         let rest = value;
@@ -40,7 +41,10 @@ const moduleWith = (names: string[]) => {
         return [...uleb(bytes.length), ...bytes];
     };
     const section = (id: number, body: number[]) => [id, ...uleb(body.length), ...body];
-    const imports = names.flatMap((name) => [...str("wasi_snapshot_preview1"), ...str(name), 0, 0]);
+    const imports = names.flatMap((entry) => {
+        const [from, name] = typeof entry === "string" ? ["wasi_snapshot_preview1", entry] : entry;
+        return [...str(from), ...str(name), 0, 0];
+    });
     return new WebAssembly.Module(
         new Uint8Array([
             0x00,
@@ -217,4 +221,84 @@ test("the directory listing resumes from its cookie and fills a short buffer", (
     assert.equal(wasm.view.getUint32(3300, true), 24 + "readme.txt".length);
     assert.equal(api.fd_readdir?.(fd, 5000, 1000, 2n, 3300), 0);
     assert.equal(wasm.view.getUint32(3300, true), 0, "the end of the listing");
+});
+
+// The calls that aren't about files, over a memory big enough for more than one 64 KiB chunk of random bytes.
+const system = () => {
+    const memory = new WebAssembly.Memory({ initial: 3 });
+    const wasm = new Wasm(memory, new WebAssembly.Table({ element: "anyfunc", initial: 1 }));
+    const names = ["clock_time_get", "clock_res_get", "random_get", "proc_exit", "sock_accept"];
+    const api = wasiImports(
+        moduleWith(names),
+        () => wasm,
+        () => undefined,
+    ).wasi_snapshot_preview1 as unknown as Record<string, Call>;
+    return { api, wasm };
+};
+
+test("clocks: wall time and a monotonic clock in nanoseconds, at microsecond resolution", () => {
+    const { api, wasm } = system();
+    const before = BigInt(Date.now()) * 1_000_000n;
+    assert.equal(api.clock_time_get?.(0, 0n, 8), 0);
+    const realtime = wasm.view.getBigUint64(8, true);
+    assert.ok(realtime >= before - 1_000_000n && realtime <= BigInt(Date.now() + 1) * 1_000_000n);
+    assert.equal(api.clock_time_get?.(1, 0n, 16), 0);
+    const first = wasm.view.getBigUint64(16, true);
+    assert.equal(api.clock_time_get?.(1, 0n, 16), 0);
+    assert.ok(wasm.view.getBigUint64(16, true) >= first, "monotonic");
+    assert.equal(api.clock_res_get?.(0, 24), 0);
+    assert.equal(wasm.view.getBigUint64(24, true), 1000n);
+});
+
+test("random bytes: more than 64 KiB in chunks, and without crypto from Math.random", () => {
+    const { api, wasm } = system();
+    const length = 65536 * 2 + 100;
+    const filled = () => {
+        wasm.bytes.fill(0, 0, length);
+        assert.equal(api.random_get?.(0, length), 0);
+        // Each 4 KiB stretch, the last chunk's included, has random bytes in it.
+        for (let at = 0; at < length; at += 4096)
+            assert.ok(
+                wasm.bytes.subarray(at, Math.min(at + 4096, length)).some((b) => b !== 0),
+                `bytes from ${at}`,
+            );
+    };
+    const getRandomValues = crypto.getRandomValues.bind(crypto);
+    const calls: number[] = [];
+    crypto.getRandomValues = ((array: Uint8Array<ArrayBuffer>) => {
+        calls.push(array.length);
+        return getRandomValues(array);
+    }) as typeof crypto.getRandomValues;
+    try {
+        filled();
+    } finally {
+        crypto.getRandomValues = getRandomValues;
+    }
+    assert.deepEqual(calls, [65536, 65536, 100]);
+
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    assert.ok(descriptor?.configurable);
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    try {
+        filled();
+    } finally {
+        Object.defineProperty(globalThis, "crypto", descriptor);
+    }
+});
+
+test("proc_exit throws; a WASI call this host lacks is NOSYS; an import from elsewhere is refused at load", () => {
+    const { api } = system();
+    assert.throws(() => api.proc_exit?.(3), /exited \(3\)/);
+    assert.equal(api.sock_accept?.(0, 0, 0), 52);
+    const wasm = () =>
+        new Wasm(new WebAssembly.Memory({ initial: 1 }), new WebAssembly.Table({ element: "anyfunc", initial: 1 }));
+    assert.throws(
+        () => wasiImports(moduleWith(["fd_write", ["env", "emscripten_notify"]]), wasm, () => undefined),
+        /imports env.emscripten_notify/,
+    );
+    const threads = wasiImports(moduleWith([["wasi", "thread-spawn"]]), wasm, () => undefined).wasi as Record<
+        string,
+        Call
+    >;
+    assert.equal(threads["thread-spawn"]?.(0), -1, "no threads without a spawner");
 });
