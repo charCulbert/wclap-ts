@@ -58,7 +58,7 @@ for (const url of [HIVE, WCLAPS + "PICOH-101.wclap.tar.gz", WCLAPS + "Slide.wcla
 chain.connect(context.destination);
 
 // A strip per plug-in: its name, presets, bypass, its interface in a window, and a number box per parameter.
-const HIDDEN = 1 << 3; // CLAP_PARAM_IS_HIDDEN
+const HIDDEN = 1 << 2; // CLAP_PARAM_IS_HIDDEN
 const STEPPED = 1 << 0; // CLAP_PARAM_IS_STEPPED
 for (const plugin of chain.plugins) {
     const strip = document.createElement("section");
