@@ -49,6 +49,7 @@
         "test": "node --test 'test/**/*.test.ts'",
         "fixtures": "node tools/fixtures.ts",
         "heavy": "node tools/heavy.ts one && node tools/heavy.ts two",
+        "bench": "npm run build && node tools/bench.ts",
         "check": "tsc --noEmit && biome check . && node tools/check-worklet.ts",
         "fix": "biome check --write .",
         "build": "npm run build:runtime && npm run build:lib && npm run build:examples",
@@ -63,6 +64,7 @@
         "@types/node": "26.6.6",
         "compost": "github:charCulbert/compost",
         "esbuild": "0.28.2",
+        "playwright": "^1.65.1",
         "typescript": "7.0.2"
     }
 }

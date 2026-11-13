@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heavy main-thread work · wclap-ts</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+    <nav><a href="index.html">Examples</a></nav>
+    <h1>Heavy main-thread work</h1>
+    <p class="muted">HeavyMain plays for 3 s while its state, about 150 ms of main-thread work, loads five times. Add
+        <code>?threads=one</code> to run it all on the audio thread, or <code>?idle</code> for a chain with no loads.
+        <code>npm run bench</code> runs all three in Chrome and prints the table.</p>
+    <div class="bar"><button id="start" class="primary" type="button">Start</button></div>
+    <p id="status"></p>
+</main>
+<script type="module" src="/dist/examples/heavy.js"></script>
+</body>
+</html>

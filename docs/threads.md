@@ -57,14 +57,14 @@ A plug-in on the audio thread alone can't start threads: an AudioWorklet can't b
 ## Measured
 
 `test/fixtures/heavy-main` rebuilds a 64-table wavetable bank whenever its state is loaded, about 150 ms of
-main-thread work. Loading its state five times while it plays, in Chrome on an M1 Pro Mac, 48 kHz, 128-frame
-blocks (`stats` from `onStats`), measured by hand rather than by a script in this repo:
+main-thread work. `npm run bench` plays it in headless Chrome (examples/heavy.html) and loads its state five times,
+with the audio thread's `onStats` at the end. Chrome 157 on an M1 Pro Mac, 48 kHz, 128-frame blocks:
 
 |                                                        | Stalls (gaps over 20 ms) | Longest gap between blocks | Longest block |
 | ------------------------------------------------------ | ------------------------ | -------------------------- | ------------- |
 | Two threads, run 1                                     | 0                        | 6 ms                       | 1 ms or less  |
-| Two threads, run 2                                     | 0                        | 6 ms                       | 1 ms or less  |
-| One thread                                             | 5                        | 162 ms                     | 1 ms or less  |
+| Two threads, run 2                                     | 0                        | 6 ms                       | 2 ms          |
+| One thread                                             | 5                        | 181 ms                     | 1 ms or less  |
 | An idle chain (HeadlessGain, no loads), for comparison | 0                        | 7 ms                       | 1 ms or less  |
 
 With one thread the state loads run on the audio thread between blocks, so the audio waits for them; with two
