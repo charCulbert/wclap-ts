@@ -39,8 +39,8 @@ export interface ChainOptions {
     // out.
     transport?: Transport;
     // The most memory a plug-in that imports its memory may grow to, in MB; 1024 by default. Phones refuse large
-    // shared memories outright, so a plug-in declaring 4 GB still loads. A plug-in with its own memory keeps its own
-    // limit.
+    // shared memories outright, so a plug-in declaring a 4 GB maximum still loads. A plug-in with its own memory keeps
+    // its own limit. One that starts with more than this is refused.
     maxMemoryMB?: number;
     onLog?: (text: string, plugin?: WclapPlugin) => void;
     onError?: (message: string, plugin?: WclapPlugin) => void;
@@ -216,9 +216,12 @@ export class WclapHost extends TypedTarget<HostEvents> {
 
     // Loads a plug-in into the chain (at the end by default) while it plays.
     async add(source: Source | Bundle, options: AddOptions = {}): Promise<WclapPlugin> {
+        const maxMemoryMB = options.maxMemoryMB ?? this.options.maxMemoryMB ?? 1024;
         const opened =
-            typeof source === "object" && "module" in source ? source : await openBundle(await fetchBytes(source));
-        const bundle = capMemory(opened, options.maxMemoryMB ?? this.options.maxMemoryMB ?? 1024);
+            typeof source === "object" && "module" in source
+                ? source
+                : await openBundle(await fetchBytes(source), { maxMemoryMB });
+        const bundle = capMemory(opened, maxMemoryMB);
         const id = nextPluginId();
         const threads = options.threads ?? this.options.threads ?? "auto";
         const at = options.index ?? this.plugins.length;
@@ -474,6 +477,10 @@ export { WclapHost as WclapChain };
 
 export function capMemory(bundle: Bundle, megabytes: number): Bundle {
     if (!bundle.memory) return bundle;
-    const pages = Math.max(bundle.memory.initial, Math.floor((megabytes * 1024 * 1024) / 65536));
+    const pages = Math.floor((megabytes * 1024 * 1024) / 65536);
+    if (bundle.memory.initial > pages)
+        throw new Error(
+            `the module starts with ${bundle.memory.initial} memory pages, more than maxMemoryMB (${megabytes} MB)`,
+        );
     return { ...bundle, memory: { ...bundle.memory, maximum: Math.min(bundle.memory.maximum, pages) } };
 }

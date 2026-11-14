@@ -214,7 +214,7 @@ test("a plug-in that checks threads runs and stops without complaint", async () 
 test("memory: a shared memory's maximum is capped, never below its initial size", async () => {
     const synth = await openBundle(fixture("PICOH-101"));
     assert.deepEqual(capMemory(synth, 64).memory, { initial: 2, maximum: 1024, shared: true });
-    assert.equal(capMemory(synth, 0).memory?.maximum, 2, "at least the initial size");
+    assert.throws(() => capMemory(synth, 0), /maxMemoryMB/, "an initial size above the cap is refused, not raised");
     assert.equal(capMemory(synth, 1 << 20).memory?.maximum, 32768, "never above the module's own maximum");
     const gain = await openBundle(fixture("HeadlessGain"));
     assert.equal(capMemory(gain, 64), gain, "a module with its own memory is left alone");
