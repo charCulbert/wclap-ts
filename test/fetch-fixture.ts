@@ -67,20 +67,29 @@ export const OPEN_WEBCLAP_BUNDLES: Fixture[] = [
 ];
 
 // Our own test plug-ins, from a github.com/charCulbert/wclap-test-plugins release; each proves one thing a host must do.
-const TEST_PLUGINS_RELEASE = "https://github.com/charCulbert/wclap-test-plugins/releases/download/v0.3.0/";
+const TEST_PLUGINS_RELEASE = "https://github.com/charCulbert/wclap-test-plugins/releases/download/v0.3.1/";
 export const TEST_PLUGINS: Fixture[] = (
     [
-        ["gui-lifecycle", "11c768226754c23c287a9fa68c4e5499dbcf3ce70457c50025e496c5de32f25c"],
-        ["process-lifecycle", "8c3f83753f9c8e3db44eda2262424c2cbd5e584f9fc9b52f0d3787864ed029da"],
-        ["probe", "62836df2f1462ee346ceeff86b573ee5e1b1c4621cf5987e6b17b6f16de26b38"],
-        ["note-ids", "932001f41ec9fbc7cdb246a853f7cf21dc377a393437863c683b2cc486f06bc0"],
+        ["audio-ports-activation", "d4b518027be7b9688ca2a5ba6dffbf76c39a6be61ad1b4fb0f80a43a4e86878f"],
+        ["gui-lifecycle", "d5b35540c10306c5883625e9f97710654c67d5d42c481e0865a8c1654e4de43e"],
+        ["log", "26121910ff11abc998ea2ed96ef098c2eae7966c1fc90093b0b415b1e9a5365b"],
+        ["midi-echo", "366ba29c0a5137d6628740f95c4c882fc7827ab014a514c2a5cbf3ef50439734"],
+        ["note-ids", "89a90b959699a53ca157137c68943c7d42bcb0e5124174bfd7ff422d0cc37758"],
+        ["note-name", "f064af46cd296c4b8d1240b71c4e73060d53d134c9eea740567141ae1af01f94"],
+        ["param-indication", "f4a3d31834edea0384c456d6a82a723f0cc6479fdf4106d90574d0bf5ae6972e"],
+        ["probe", "8bdab415a987183727b1be701e0eb538b1a6a789cf65f4f7e092bab5bdb80042"],
+        ["process-lifecycle", "2cfeb006085bf61788780678c4d99dd5aa7d4e8bfc545c2ee6c9fbdcd2a01c47"],
+        ["remote-controls", "01f5565493c1625c80f260c984e18a26028fd1667e71169e67cf4edef210d9db"],
+        ["render", "58bcb0abae5a818ad450034a1c9c461b0239e44017ce11e111f124414fa1e20a"],
+        ["state-context", "c24430cd2e47ec9c03f3452256636138f63cf8eb92b2d7cc7427082ba55a289e"],
+        ["voice-info", "af2a0d46c7a591fc56175c8973acf41236dbadb8771193651cc1a1c08b020b1e"],
     ] as const
 ).map(([name, sha256]) => ({
     name,
     url: `${TEST_PLUGINS_RELEASE}${name}.wclap.tar.gz`,
     sha256,
     licence: "MIT",
-    source: `https://github.com/charCulbert/wclap-test-plugins/tree/v0.3.0/plugins/${name}`,
+    source: `https://github.com/charCulbert/wclap-test-plugins/tree/v0.3.1/plugins/${name}`,
 }));
 
 export const OUTSIDE_FIXTURES = [...TEST_PLUGINS, ...OPEN_WEBCLAP_BUNDLES];

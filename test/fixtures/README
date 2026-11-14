@@ -20,14 +20,11 @@ Spawner.wasm
     spawner/ here (MIT), built by spawner/build.sh.
     Starts its own thread with pthread_create.
 
-MidiEcho.wasm
-    midi-echo/ here (MIT), built by midi-echo/build.sh.
-    Sends every note and MIDI event straight back out, and marks each one's type and flags in its output. Two
-    plug-ins: one takes notes in the MIDI dialect, one only in MIDI 2.
-
 Not in the repo: `npm run fixtures` fetches these into .cache/, pinned by release or commit and sha256, and prints
 each one's licence and source (test/fetch-fixture.ts lists them). A test fetches any it needs that's missing.
-    - gui-lifecycle, process-lifecycle, probe and note-ids, from github.com/charCulbert/wclap-test-plugins v0.3.0 (MIT).
+    - Thirteen test plug-ins from github.com/charCulbert/wclap-test-plugins v0.3.1 (MIT), each proving one thing a
+      host must do: audio-ports-activation, gui-lifecycle, log, midi-echo, note-ids, note-name, param-indication,
+      probe, process-lifecycle, remote-controls, render, state-context and voice-info.
     - Twelve bundles built by github.com/andremichelle/open-webclap, each under its plug-in's own licence: Hive
       (CC0-1.0; the note sequencer the chain tests use), Note Lab, Pearls, Oxo Synth2 and WetChorus (MIT), and seven
       OpenRB-338 plug-ins (GPL-3.0-only). Their bundles' page files are open-webclap's MIT code.

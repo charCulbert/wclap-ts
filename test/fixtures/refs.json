@@ -118,5 +118,59 @@
         "peak": 3,
         "rms": 0.0165,
         "notesOut": 0
+    },
+    "audio-ports-activation": {
+        "sha256": "e8a9cf64882d98781344cc31b4bf3d8750f53c664ecd86fe5d4d2550dd24d163",
+        "peak": 1,
+        "rms": 1,
+        "notesOut": 0
+    },
+    "log": {
+        "sha256": "538f83232543efe5a28a455e0b7d3bcc471d68b44659cefa91408588ec5a3379",
+        "peak": 7,
+        "rms": 6.5031,
+        "notesOut": 0
+    },
+    "midi-echo": {
+        "sha256": "df84110c097f95d756d82964a1e05689823f23d5cf34fa14ee2a740f73c02ac3",
+        "peak": 10,
+        "rms": 0.0765,
+        "notesOut": 4
+    },
+    "note-name": {
+        "sha256": "8eafc7bd411c1f02b9e972a83d2b0a4164eefc5ef51e6b63ad7acc78be4ad44f",
+        "peak": 0,
+        "rms": 0,
+        "notesOut": 0
+    },
+    "param-indication": {
+        "sha256": "18774bfced33056fc695cce04eb09c4ee02d821f2f2ea9fd21ab3b8e33f76ac2",
+        "peak": 1,
+        "rms": 1,
+        "notesOut": 0
+    },
+    "remote-controls": {
+        "sha256": "c60e8ea5678cf7b21565e6af2d106722928e70f9f53563243126d6406e0a236d",
+        "peak": 1,
+        "rms": 0.559,
+        "notesOut": 0
+    },
+    "render": {
+        "sha256": "e8a9cf64882d98781344cc31b4bf3d8750f53c664ecd86fe5d4d2550dd24d163",
+        "peak": 1,
+        "rms": 1,
+        "notesOut": 0
+    },
+    "state-context": {
+        "sha256": "18774bfced33056fc695cce04eb09c4ee02d821f2f2ea9fd21ab3b8e33f76ac2",
+        "peak": 1,
+        "rms": 1,
+        "notesOut": 0
+    },
+    "voice-info": {
+        "sha256": "f7a73a388c3a79b7fd708c6d3f4e371af12eaf39d22ee0bbede4686fb052c0d3",
+        "peak": 4,
+        "rms": 2.8284,
+        "notesOut": 0
     }
 }

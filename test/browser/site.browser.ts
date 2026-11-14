@@ -375,9 +375,9 @@ test("raw MIDI from the page: untimed calls are live, timed ones aren't, and not
     const { page, errors } = await harness();
     const r = await page.evaluate(async () => {
         const { wclap } = window as unknown as Harness;
-        // MidiEcho marks each event it receives: its CLAP event type on the left, its flags on the right.
+        // midi-echo marks each event it receives: its CLAP event type on the left, its flags on the right.
         const context = new OfflineAudioContext({ numberOfChannels: 2, length: 1024, sampleRate: 48000 });
-        const plugin = await wclap.loadWclap(context, "/fixtures/MidiEcho.wasm", { lead: 100 / 48000 });
+        const plugin = await wclap.loadWclap(context, "/cache/midi-echo.wclap.tar.gz", { lead: 100 / 48000 });
         plugin.connect(context.destination);
         const at = (frame: number) => frame / context.sampleRate;
         const sent = [
@@ -428,7 +428,7 @@ test("Web MIDI: pitch bend, aftertouch and sysex reach the plug-in and come back
             input.dispatchEvent(e);
         };
         const context = new AudioContext();
-        const plugin = await wclap.loadWclap(context, "/fixtures/MidiEcho.wasm");
+        const plugin = await wclap.loadWclap(context, "/cache/midi-echo.wclap.tar.gz");
         plugin.connect(new GainNode(context, { gain: 0 })).connect(context.destination);
         const out: number[][] = [];
         plugin.host.addEventListener("midiout", (e) => void out.push([...e.detail.data]));

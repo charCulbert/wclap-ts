@@ -1,8 +1,7 @@
 // Raw MIDI: through the event queue, into a plug-in in the dialect it asks for, out of it, down a chain, and from Web
-// MIDI. MidiEcho (test/fixtures/midi-echo) sends every note and MIDI event straight back out and marks each input
+// MIDI. midi-echo (a test plug-in, fetched) sends every note and MIDI event straight back out and marks each input
 // event's frame with its type (left) and flags (right).
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { EventQueue, MAX_MIDI_BYTES, Scheduler, type Timed } from "../src/events/event-queue.ts";
 import { Midi } from "../src/page/midi.ts";
@@ -33,8 +32,11 @@ const bytes = (e: Event | undefined) =>
 const sysex = (length: number) =>
     Array.from({ length }, (_, i) => (i === 0 ? 0xf0 : i === length - 1 ? 0xf7 : i % 128));
 
-const echo = async (id = "dev.wclap-ts.midi-echo") => {
-    const bundle = await openBundle(readFileSync(new URL("fixtures/MidiEcho.wasm", import.meta.url)));
+const MIDI_ECHO = "com.charlieculbert.wclap-test-plugins.midi-echo";
+const echo = async (id = MIDI_ECHO) => {
+    const fixture = TEST_PLUGINS.find((f) => f.name === "midi-echo");
+    assert.ok(fixture);
+    const bundle = await openBundle(await fetchFixture(fixture));
     const plugin = Plugin.create(Instance.create(bundle, { log: () => undefined }), id, () => undefined);
     plugin.activate(48000, 128);
     return plugin;
@@ -91,7 +93,7 @@ test("the page's side of the queue (drain) gets each message's own bytes", () =>
     ]);
 });
 
-test("MidiEcho (MIDI dialect): notes arrive as MIDI, pitch bend, aftertouch and sysex as they are, and all come back", async () => {
+test("midi-echo (MIDI dialect): notes arrive as MIDI, pitch bend, aftertouch and sysex as they are, and all come back", async () => {
     const plugin = await echo();
     const events: Event[] = [
         { at: 1, type: "note-on", key: 60, velocity: 1, channel: 2, noteId: 5, live: true },
@@ -122,7 +124,7 @@ test("MidiEcho (MIDI dialect): notes arrive as MIDI, pitch bend, aftertouch and 
     plugin.destroy();
 });
 
-test("MidiEcho: a choke or a note-off for any key, which MIDI can't say, goes as a CLAP note", async () => {
+test("midi-echo: a choke or a note-off for any key, which MIDI can't say, goes as a CLAP note", async () => {
     const plugin = await echo();
     const audio = plugin.process(16, [
         { at: 1, type: "note-choke", key: 60, velocity: 0, channel: 0 },
@@ -135,8 +137,8 @@ test("MidiEcho: a choke or a note-off for any key, which MIDI can't say, goes as
     plugin.destroy();
 });
 
-test("Midi2Echo (MIDI 2 only): notes and channel messages arrive as MIDI 2 packets, sysex as sysex, and come back as MIDI", async () => {
-    const plugin = await echo("dev.wclap-ts.midi2-echo");
+test("midi-echo.midi2 (MIDI 2 only): notes and channel messages arrive as MIDI 2 packets, sysex as sysex, and come back as MIDI", async () => {
+    const plugin = await echo(`${MIDI_ECHO}.midi2`);
     const audio = plugin.process(16, [
         { at: 1, type: "note-on", key: 60, velocity: 1, channel: 1 },
         { at: 2, type: "midi", data: Uint8Array.of(0xe1, 0, 64), offset: 0, size: 3 },
@@ -158,14 +160,14 @@ test("Midi2Echo (MIDI 2 only): notes and channel messages arrive as MIDI 2 packe
     plugin.destroy();
 });
 
-test("the dialect comes from the plug-in's note input: probe prefers CLAP, MidiEcho MIDI, Midi2Echo MIDI 2", async () => {
+test("the dialect comes from the plug-in's note input: probe prefers CLAP, midi-echo MIDI, midi-echo.midi2 MIDI 2", async () => {
     const fixture = TEST_PLUGINS.find((f) => f.name === "probe");
     assert.ok(fixture);
     const instance = Instance.create(await openBundle(await fetchFixture(fixture)), { log: () => undefined });
     const probe = Plugin.create(instance, instance.plugins()[0]?.id ?? "", () => undefined);
     probe.activate(48000, 128);
     const midiEcho = await echo();
-    const midi2Echo = await echo("dev.wclap-ts.midi2-echo");
+    const midi2Echo = await echo(`${MIDI_ECHO}.midi2`);
     assert.deepEqual(
         [probe, midiEcho, midi2Echo].map((p) => p.audio?.setup.dialect),
         [CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2],
