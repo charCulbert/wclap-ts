@@ -302,7 +302,8 @@ npm run build
 
 The examples and the site use [compost](https://github.com/charCulbert/compost) web components (knobs, a piano),
 installed from GitHub. After a change meant to alter a plug-in's sound, `UPDATE_REFS=1 npm run test:refs` saves the
-new output. `npm run gen` regenerates the CLAP struct layouts from the headers in `external/clap/include`
+new output. `npm run perf` times each plug-in's block against tools/perf-baseline.json (saved on an M1 Pro) and
+fails if one is more than 20% slower; `npm run bench` measures the two-thread figures in docs/threads.md. `npm run gen` regenerates the CLAP struct layouts from the headers in `external/clap/include`
 (it fetches the WASI SDK's clang on first run).
 
 ## Thanks

@@ -52,6 +52,7 @@
         "test:browser": "npm run build && npm --prefix site run setup && node --test test/browser/site.browser.ts",
         "heavy": "node tools/heavy.ts one && node tools/heavy.ts two",
         "bench": "npm run build && node tools/bench.ts",
+        "perf": "node tools/perf.ts",
         "check": "tsc --noEmit && biome check . && node tools/check-worklet.ts",
         "fix": "biome check --write .",
         "build": "npm run build:runtime && npm run build:lib && npm run build:examples",
