@@ -22,7 +22,7 @@ Spawner.wasm
 
 Not in the repo: `npm run fixtures` fetches these into .cache/, pinned by release or commit and sha256, and prints
 each one's licence and source (test/fetch-fixture.ts lists them). A test fetches any it needs that's missing.
-    - gui-lifecycle and process-lifecycle, from github.com/charCulbert/wclap-test-plugins v0.2.0 (MIT).
+    - gui-lifecycle, process-lifecycle, probe and note-ids, from github.com/charCulbert/wclap-test-plugins v0.3.0 (MIT).
     - Twelve bundles built by github.com/andremichelle/open-webclap, each under its plug-in's own licence: Hive
       (CC0-1.0; the note sequencer the chain tests use), Note Lab, Pearls, Oxo Synth2 and WetChorus (MIT), and seven
       OpenRB-338 plug-ins (GPL-3.0-only). Their bundles' page files are open-webclap's MIT code.

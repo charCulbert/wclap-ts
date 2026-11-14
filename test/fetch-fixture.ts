@@ -67,18 +67,20 @@ export const OPEN_WEBCLAP_BUNDLES: Fixture[] = [
 ];
 
 // Our own test plug-ins, from a github.com/charCulbert/wclap-test-plugins release; each proves one thing a host must do.
-const TEST_PLUGINS_RELEASE = "https://github.com/charCulbert/wclap-test-plugins/releases/download/v0.2.0/";
+const TEST_PLUGINS_RELEASE = "https://github.com/charCulbert/wclap-test-plugins/releases/download/v0.3.0/";
 export const TEST_PLUGINS: Fixture[] = (
     [
-        ["gui-lifecycle", "712517e5d12e39ec63637823383457f167e84168990bcf8abea25f0a7d2292e6"],
-        ["process-lifecycle", "f45f16420f2ac71565a4d46bc321ad3f2cca5e9f71141858dcb6edb1f9d0cbd5"],
+        ["gui-lifecycle", "11c768226754c23c287a9fa68c4e5499dbcf3ce70457c50025e496c5de32f25c"],
+        ["process-lifecycle", "8c3f83753f9c8e3db44eda2262424c2cbd5e584f9fc9b52f0d3787864ed029da"],
+        ["probe", "62836df2f1462ee346ceeff86b573ee5e1b1c4621cf5987e6b17b6f16de26b38"],
+        ["note-ids", "932001f41ec9fbc7cdb246a853f7cf21dc377a393437863c683b2cc486f06bc0"],
     ] as const
 ).map(([name, sha256]) => ({
     name,
     url: `${TEST_PLUGINS_RELEASE}${name}.wclap.tar.gz`,
     sha256,
     licence: "MIT",
-    source: `https://github.com/charCulbert/wclap-test-plugins/tree/v0.2.0/plugins/${name}`,
+    source: `https://github.com/charCulbert/wclap-test-plugins/tree/v0.3.0/plugins/${name}`,
 }));
 
 export const OUTSIDE_FIXTURES = [...TEST_PLUGINS, ...OPEN_WEBCLAP_BUNDLES];

@@ -106,5 +106,17 @@
         "peak": 0.7676,
         "rms": 0.2254,
         "notesOut": 0
+    },
+    "probe": {
+        "sha256": "abbef80620376fad057f80e8ab1bd2274de80b31b37af90dac532239e4bb730e",
+        "peak": 2,
+        "rms": 0.2797,
+        "notesOut": 0
+    },
+    "note-ids": {
+        "sha256": "de9dbf29cb02d3f748d372677104bdbaa5e1010de295ee953cf4310b7e74ffc4",
+        "peak": 2,
+        "rms": 0.0108,
+        "notesOut": 0
     }
 }
