@@ -192,7 +192,12 @@ class HostProcessor extends Base {
                 case "call": {
                     const plugin = this.#local.get(m.id);
                     if (!plugin) throw new Error(`no plug-in ${m.id} on the audio thread`);
-                    this.#send({ type: "result", callId: m.callId, value: mainCall(plugin.main, m.call) });
+                    const call = m.call;
+                    const value =
+                        call.call === "set-port-active"
+                            ? plugin.setPortActive(call.input, call.index, call.active)
+                            : mainCall(plugin.main, call);
+                    this.#send({ type: "result", callId: m.callId, value });
                     return;
                 }
                 case "destroy":

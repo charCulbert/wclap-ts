@@ -133,6 +133,7 @@ reverb.connect(context.destination);
 | State            | `saveState(context?)`, `loadState(bytes, context?)`, `presets()`, `loadPreset(preset)`; context `"preset"`, `"duplicate"` or `"project"`, for plug-ins that save differently for each |
 | Interface        | `showInterface(element)`, `hideInterface()`                                                                                                                                           |
 | Information      | `latency()`, `tail()`, `valueText(id, value)`, `remoteControls()`, `noteNames()`, `voiceInfo()`                                                                                       |
+| Audio ports      | `setPortActive(input, index, active)`: deactivate an output you don't use or an input you don't feed (it gets silence); resolves to whether it agreed                                 |
 | MIDI             | `midi(bytes, when?)`; `connectMidi({ sysex? })` on a plug-in from `loadWclap`; on a chain, `midi`, `connectMidi`, `connectMidiOut(output)` and `mapCC(cc, plugin, paramId)`           |
 
 Calls that ask the plug-in something return promises, since the plug-in may be running on another thread.

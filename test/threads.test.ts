@@ -57,6 +57,26 @@ test("a restart request on two threads: stop, reactivate on the main side, resum
     await main.stop(50);
 });
 
+test("an audio port switched on two threads: stop, set_active on the main side, resume", async () => {
+    const bundle = await fixture("PICOH-101");
+    const options = { module: bundle.module, memory: bundle.memory, sampleRate: 48000, maxFrames: 128 };
+    const { main, started } = MainThread.start(options, quiet);
+    const audio = new AudioSide(started.audio, () => undefined);
+    assert.equal(await main.setPortActive(false, 0, false), false, "PICOH-101 has no audio_ports_activation");
+    // Our test plug-in that has it isn't built for two threads: stand in for it on the main side.
+    const calls: unknown[][] = [];
+    Object.defineProperty(main.plugin, "portsActivation", { value: {} });
+    main.plugin.setPortActive = (...args) => calls.push([...args, main.control.state]) > 0;
+    const done = main.setPortActive(false, 0, false);
+    assert.equal(main.control.state, State.stopping);
+    assert.equal(audio.process(128, [], [], 0, transport), null, "stops");
+    assert.equal(await done, true);
+    assert.deepEqual(calls, [[false, 0, false, State.stopped]], "called once the audio side stopped");
+    assert.equal(main.control.state, State.active);
+    assert.ok(audio.process(128, [], [], 0, transport), "processing again");
+    await main.stop(50);
+});
+
 test("two threads: the audio side takes the plug-in's request_process and params.request_flush each block", async () => {
     const bundle = await fixture("PICOH-101");
     const options = { module: bundle.module, memory: bundle.memory, sampleRate: 48000, maxFrames: 128 };

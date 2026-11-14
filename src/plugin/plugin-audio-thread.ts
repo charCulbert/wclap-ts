@@ -22,6 +22,7 @@ import {
     CLAP_TRANSPORT_HAS_TEMPO,
     CLAP_TRANSPORT_HAS_TIME_SIGNATURE,
     CLAP_TRANSPORT_IS_PLAYING,
+    clap_audio_buffer,
     clap_event_header,
     clap_event_midi,
     clap_event_midi_sysex,
@@ -169,10 +170,19 @@ export class PluginAudio {
             written = this.#writeEvent(event, written);
         }
         const views = this.#viewsFor(frames);
+        const buffers = this.#process.get("audio_inputs");
         for (let p = 0; p < views.inputs.length; p++) {
             const port = views.inputs[p] ?? [];
+            // The main side sets the constant_mask of an input it deactivated (audio_ports_activation): silence.
+            const inactive =
+                this.wasm.read(
+                    "u32",
+                    buffers + p * clap_audio_buffer.size + clap_audio_buffer.fields.constant_mask.at,
+                ) !== 0;
             for (let c = 0; c < port.length; c++) {
-                const source = inputs[p]?.[c] ?? (inputs[p]?.length === 1 ? inputs[p]?.[0] : undefined);
+                const source = inactive
+                    ? undefined
+                    : (inputs[p]?.[c] ?? (inputs[p]?.length === 1 ? inputs[p]?.[0] : undefined));
                 const target = port[c];
                 if (!target) continue;
                 if (source) {

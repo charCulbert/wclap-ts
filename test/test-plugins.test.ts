@@ -679,11 +679,35 @@ test("audio-ports-activation: both outputs active from the start", async () => {
     plugin.destroy();
 });
 
-test("audio-ports-activation: an output the page doesn't use is deactivated while the plug-in is inactive", {
-    todo: "wclap-ts keeps every port active; no audio_ports_activation calls (plan: Small gaps, as fixtures need them)",
-}, async () => {
-    const plugin = await load("audio-ports-activation");
-    // A page that connects only output 1 would get output 2 deactivated: silence there.
+test("audio-ports-activation: outputs are deactivated and activated again with the plug-in deactivated around each call", async () => {
+    const logged: string[] = [];
+    const plugin = await load("audio-ports-activation", { log: (text) => logged.push(text) });
+    plugin.process(16);
+    assert.equal(plugin.setPortActive(false, 1, false), true);
+    assert.deepEqual(held(plugin.process(16)), [[1], [0]], "output 2 deactivated, its buffer still passed");
+    assert.equal(plugin.setPortActive(false, 0, false), true);
+    assert.deepEqual(held(plugin.process(16)), [[0], [0]]);
+    assert.equal(plugin.setPortActive(false, 0, true), true);
+    assert.equal(plugin.setPortActive(false, 1, true), true);
+    assert.deepEqual(held(plugin.process(16)), [[1], [2]]);
+    // Refused, and nothing changes: an input, a port it hasn't.
+    assert.equal(plugin.setPortActive(true, 0, false), false);
+    assert.equal(plugin.setPortActive(false, 2, false), false);
+    assert.deepEqual(held(plugin.process(16)), [[1], [2]]);
+    assert.deepEqual(logged, []);
+    plugin.destroy();
+});
+
+test("audio-ports-activation: set before activating, and false for a plug-in without the extension", async () => {
+    const fixture = TEST_PLUGINS.find((f) => f.name === "audio-ports-activation");
+    assert.ok(fixture);
+    const instance = Instance.create(await openBundle(await fetchFixture(fixture)), { log: () => undefined });
+    const plugin = Plugin.create(instance, instance.plugins()[0]?.id ?? "", () => undefined);
+    assert.equal(plugin.setPortActive(false, 1, false), true);
+    plugin.activate(48000, 128);
     assert.deepEqual(held(plugin.process(16)), [[1], [0]]);
     plugin.destroy();
+    const other = await load("param-indication");
+    assert.equal(other.setPortActive(false, 1, false), false);
+    other.destroy();
 });

@@ -195,6 +195,13 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
         return this.call({ call: "indicate", id, ...indication });
     }
 
+    // Activates or deactivates one of its audio ports (CLAP's audio_ports_activation): a deactivated output needn't be
+    // computed, a deactivated input is silent. Returns whether the plug-in agreed; false without the extension. A
+    // plug-in that can't switch ports while processing stops for a moment around it.
+    setPortActive(input: boolean, index: number, active: boolean): Promise<boolean> {
+        return this.call({ call: "set-port-active", input, index, active });
+    }
+
     remoteControls(): Promise<RemoteControlsPage[]> {
         return this.call({ call: "remote-controls" });
     }

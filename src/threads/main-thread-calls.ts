@@ -21,6 +21,9 @@ const handlers = {
     params: (p: PluginMain) => p.params(),
     "remote-controls": (p: PluginMain) => p.remoteControls(),
     indicate: (p: PluginMain, c: { id: number } & Indication) => p.indicate(c.id, c),
+    // Here only while the audio side isn't processing: the Worker and the worklet host stop it around this call.
+    "set-port-active": (p: PluginMain, c: { input: boolean; index: number; active: boolean }) =>
+        p.setPortActive(c.input, c.index, c.active),
     "note-names": (p: PluginMain) => p.noteNames(),
     "voice-info": (p: PluginMain) => p.voiceInfo(),
     "param-values": (p: PluginMain) => p.paramValues(),

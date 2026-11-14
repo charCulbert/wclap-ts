@@ -55,7 +55,12 @@ scope.onmessage = async ({ data }) => {
             return;
         }
         main.check();
-        send({ type: "result", callId: data.callId, value: mainCall(main.plugin, data.call) });
+        const call = data.call;
+        const value =
+            call.call === "set-port-active"
+                ? await main.setPortActive(call.input, call.index, call.active)
+                : mainCall(main.plugin, call);
+        send({ type: "result", callId: data.callId, value });
         main.plugin.idle();
     } catch (error) {
         const message = error instanceof Error ? (error.stack ?? error.message) : String(error);

@@ -139,6 +139,20 @@ export class MainThread {
         return this.#serving;
     }
 
+    // set_active needs the plug-in deactivated here, so the audio side stops processing around it, as for a restart:
+    // it waits for the audio side as long as that takes (an AudioContext may be suspended). False once stopping.
+    async setPortActive(input: boolean, index: number, active: boolean): Promise<boolean> {
+        if (!this.plugin.portsActivation) return false;
+        while (!this.#stopped && this.control.state !== State.stopped) {
+            this.check();
+            await this.#pause(1000);
+        }
+        if (this.#stopped) return false;
+        const done = this.plugin.setPortActive(input, index, active);
+        this.control.state = State.active;
+        return done;
+    }
+
     // Asks the audio side to stop processing and waits for it, at most `ms`, without blocking.
     #pause(ms: number): Promise<boolean> {
         this.control.state = State.stopping;

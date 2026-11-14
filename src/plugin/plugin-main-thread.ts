@@ -3,6 +3,8 @@
 import {
     CLAP_AUDIO_PORT_IS_MAIN,
     CLAP_EXT_AUDIO_PORTS,
+    CLAP_EXT_AUDIO_PORTS_ACTIVATION,
+    CLAP_EXT_AUDIO_PORTS_ACTIVATION_COMPAT,
     CLAP_EXT_GUI,
     CLAP_EXT_LATENCY,
     CLAP_EXT_NOTE_NAME,
@@ -44,6 +46,7 @@ import {
     clap_param_info,
     clap_plugin,
     clap_plugin_audio_ports,
+    clap_plugin_audio_ports_activation,
     clap_plugin_gui,
     clap_plugin_latency,
     clap_plugin_note_name,
@@ -120,6 +123,9 @@ export class PluginMain {
     #host;
     #active = false;
     #activation = { sampleRate: 0, maxFrames: 0 };
+    // Its audio_inputs, once active, and the inputs deactivated through audio_ports_activation.
+    #inputBuffers = 0;
+    readonly #inactiveInputs = new Set<number>();
     #extensions = new Map<string, number>();
     readonly #options: MainOptions;
     // The plug-in's timers by ID: its period and when it's next due, in Date.now() milliseconds.
@@ -521,6 +527,8 @@ export class PluginMain {
         };
         const inputs = this.#buffers(this.ports.inputs, maxFrames);
         const outputs = this.#buffers(this.ports.outputs, maxFrames);
+        this.#inputBuffers = inputs.buffers;
+        for (const index of this.#inactiveInputs) this.#markInactive(index, true);
         const process = this.instance.allocStruct(clap_process);
         process.set("audio_inputs", asPtr(inputs.buffers));
         process.set("audio_outputs", asPtr(outputs.buffers));
@@ -739,20 +747,67 @@ export class PluginMain {
         if (!loaded) throw new Error("the plug-in failed to load the state");
     }
 
+    // Its audio_ports_activation, or null.
+    get portsActivation(): Struct<typeof clap_plugin_audio_ports_activation> | null {
+        return (
+            this.extension(CLAP_EXT_AUDIO_PORTS_ACTIVATION, clap_plugin_audio_ports_activation) ??
+            this.extension(CLAP_EXT_AUDIO_PORTS_ACTIVATION_COMPAT, clap_plugin_audio_ports_activation)
+        );
+    }
+
+    // Activates or deactivates an audio port (audio_ports_activation.set_active); what the plug-in returned, or false
+    // without the extension. With `live`, an active plug-in that can switch ports while processing is called on the
+    // audio thread, between blocks (one thread: the caller is there). Otherwise set_active needs the plug-in
+    // deactivated, so an active one is deactivated around it, after the audio side has stopped processing. A
+    // deactivated port still has its buffers; an input's is silent with its constant_mask set.
+    setPortActive(input: boolean, index: number, active: boolean, live = false): boolean {
+        const ext = this.portsActivation;
+        if (!ext) return false;
+        const at = this.plugin.at;
+        live &&= this.#active && Boolean(ext.call("can_activate_while_processing", at));
+        const around = this.#active && !live;
+        if (around) this.plugin.call("deactivate", at);
+        this.thread.audio = live;
+        let done = false;
+        try {
+            done = Boolean(ext.call("set_active", at, input, index, active, 32));
+        } finally {
+            this.thread.audio = false;
+            if (around) this.#reactivate();
+        }
+        if (done && input) {
+            if (active) this.#inactiveInputs.delete(index);
+            else this.#inactiveInputs.add(index);
+            this.#markInactive(index, !active);
+        }
+        return done;
+    }
+
+    // An input port's constant_mask: every channel constant while it's inactive, which the audio side reads too.
+    #markInactive(index: number, inactive: boolean): void {
+        if (!this.#inputBuffers || index >= this.ports.inputs.length) return;
+        const at = asPtr<"clap_audio_buffer">(this.#inputBuffers + index * clap_audio_buffer.size);
+        this.instance.wasm.struct(clap_audio_buffer, at).set("constant_mask", inactive ? 2n ** 64n - 1n : 0n);
+    }
+
+    #reactivate(): void {
+        const { sampleRate, maxFrames } = this.#activation;
+        this.#active = this.plugin.call("activate", this.plugin.at, sampleRate, 1, maxFrames);
+        if (!this.#active) throw new Error("activate failed after deactivating it");
+        this.#readVoiceInfo();
+    }
+
     // A plug-in's restart request: after the audio side has stopped processing, deactivate and activate again with
     // the same buffers. The audio side starts processing again on its next block.
     restart(): void {
         if (!this.#active) return;
         this.plugin.call("deactivate", this.plugin.at);
-        const { sampleRate, maxFrames } = this.#activation;
         // The buffers stay as they were, so a plug-in that changed its ports gets the old layout: the page hears of
         // it and can load the plug-in again.
         const ports = { inputs: this.#portChannels(true), outputs: this.#portChannels(false) };
         if (ports.inputs.join() !== this.ports.inputs.join() || ports.outputs.join() !== this.ports.outputs.join())
             this.#options.onChange?.("ports");
-        this.#active = this.plugin.call("activate", this.plugin.at, sampleRate, 1, maxFrames);
-        if (!this.#active) throw new Error("activate failed after a restart");
-        this.#readVoiceInfo();
+        this.#reactivate();
         this.requests.add("latency");
     }
 

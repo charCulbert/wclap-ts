@@ -55,6 +55,13 @@ export class Plugin {
         this.main.loadState(bytes, context);
     }
 
+    // Between blocks: on the audio thread if the plug-in can switch ports while processing, otherwise with
+    // processing stopped and the plug-in deactivated around it (see PluginMain.setPortActive).
+    setPortActive(input: boolean, index: number, active: boolean): boolean {
+        if (!this.main.portsActivation?.call("can_activate_while_processing", this.plugin.at)) this.#audio?.stop();
+        return this.main.setPortActive(input, index, active, true);
+    }
+
     flush(events: readonly Event[], count: number): void {
         this.#audio?.flush(events, count);
     }
