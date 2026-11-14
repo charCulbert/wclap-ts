@@ -7,6 +7,8 @@ import {
     CLAP_EXT_LATENCY,
     CLAP_EXT_NOTE_NAME,
     CLAP_EXT_NOTE_PORTS,
+    CLAP_EXT_PARAM_INDICATION,
+    CLAP_EXT_PARAM_INDICATION_COMPAT,
     CLAP_EXT_PARAMS,
     CLAP_EXT_PRESET_LOAD,
     CLAP_EXT_PRESET_LOAD_COMPAT,
@@ -46,6 +48,7 @@ import {
     clap_plugin_latency,
     clap_plugin_note_name,
     clap_plugin_note_ports,
+    clap_plugin_param_indication,
     clap_plugin_params,
     clap_plugin_preset_load,
     clap_plugin_remote_controls,
@@ -80,6 +83,7 @@ import {
 } from "./clap-host-callbacks.ts";
 import type {
     AudioSetup,
+    Indication,
     InterfaceInfo,
     MainOptions,
     NoteName,
@@ -100,6 +104,8 @@ const STATE_CONTEXTS = {
     duplicate: CLAP_STATE_CONTEXT_FOR_DUPLICATE,
     project: CLAP_STATE_CONTEXT_FOR_PROJECT,
 };
+
+const AUTOMATION = { none: 0, present: 1, playing: 2, recording: 3, overriding: 4 };
 
 export class PluginMain {
     readonly instance: Instance;
@@ -242,6 +248,44 @@ export class PluginMain {
             });
         }
         return pages;
+    }
+
+    // Tells the plug-in how the host shows a parameter (param_indication); nothing for a plug-in without it.
+    indicate(id: number, indication: Indication): void {
+        const ext =
+            this.extension(CLAP_EXT_PARAM_INDICATION, clap_plugin_param_indication) ??
+            this.extension(CLAP_EXT_PARAM_INDICATION_COMPAT, clap_plugin_param_indication);
+        if (!ext) return;
+        const { mapping, automation, automationColour } = indication;
+        // Two colours, then the label and description, in the scratch buffer.
+        const bytes = this.instance.wasm.bytes;
+        const texts = mapping ? [encodeUtf8(mapping.label), encodeUtf8(mapping.description)] : [];
+        const at = this.#scratch(8 + texts.reduce((n, t) => n + t.length + 1, 0));
+        let next = at + 8;
+        const string = (text: Uint8Array | undefined) => {
+            if (!text) return NULL;
+            bytes.set(text, next);
+            bytes[next + text.length] = 0;
+            next += text.length + 1;
+            return asPtr<"char">(next - text.length - 1);
+        };
+        const colour = (text: string | undefined, ptr: number) => {
+            if (text === undefined) return NULL;
+            const match = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(text);
+            if (!match) throw new Error(`${text} isn't a colour: "#rrggbb" or "#rrggbbaa"`);
+            const rgb = Number.parseInt(match[1] ?? "", 16);
+            bytes[ptr] = match[2] ? Number.parseInt(match[2], 16) : 255;
+            bytes[ptr + 1] = rgb >> 16;
+            bytes[ptr + 2] = (rgb >> 8) & 255;
+            bytes[ptr + 3] = rgb & 255;
+            return asPtr<"clap_color">(ptr);
+        };
+        const mappingColour = colour(mapping?.colour, at);
+        const automationAt = colour(automationColour, at + 4);
+        const plugin = this.plugin.at;
+        if (mapping !== undefined)
+            ext.call("set_mapping", plugin, id, !!mapping, mappingColour, string(texts[0]), string(texts[1]));
+        if (automation !== undefined) ext.call("set_automation", plugin, id, AUTOMATION[automation], automationAt);
     }
 
     noteNames(): NoteName[] {

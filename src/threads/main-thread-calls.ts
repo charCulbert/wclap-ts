@@ -2,7 +2,7 @@
 // threads) and the AudioWorklet between blocks (one thread).
 
 import type { PluginMain } from "../plugin/plugin-main-thread.ts";
-import type { Change, LogSeverity, Preset, StateContext } from "../plugin/plugin-types.ts";
+import type { Change, Indication, LogSeverity, Preset, StateContext } from "../plugin/plugin-types.ts";
 import type { ThreadStart } from "./plugin-spawned-threads.ts";
 
 // Each call, by name, and what it returns: the page's results are typed from the plug-in's own methods.
@@ -20,6 +20,7 @@ const handlers = {
     tail: (p: PluginMain) => p.tail(),
     params: (p: PluginMain) => p.params(),
     "remote-controls": (p: PluginMain) => p.remoteControls(),
+    indicate: (p: PluginMain, c: { id: number } & Indication) => p.indicate(c.id, c),
     "note-names": (p: PluginMain) => p.noteNames(),
     "voice-info": (p: PluginMain) => p.voiceInfo(),
     "param-values": (p: PluginMain) => p.paramValues(),

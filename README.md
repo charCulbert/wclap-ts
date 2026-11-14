@@ -127,6 +127,7 @@ reverb.connect(context.destination);
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Notes            | `noteOn`, `noteOff`, `choke(key, when?, channel?)`, with an optional AudioContext time and channel                                                                                    |
 | Parameters       | `params`, `param(id, value, when?)`, `values`                                                                                                                                         |
+| Indication       | `indicate(id, { mapping?, automation?, automationColour? })`: tell it a parameter is mapped to a control (`null` clears) or automated, for its interface to show                      |
 | Modulation       | `modulate(id, amount, when?, note?)`, for every voice or one note                                                                                                                     |
 | Note expressions | `expression(kind, key, value, when?)`: tuning, pressure, and the rest of CLAP's list                                                                                                  |
 | State            | `saveState(context?)`, `loadState(bytes, context?)`, `presets()`, `loadPreset(preset)`; context `"preset"`, `"duplicate"` or `"project"`, for plug-ins that save differently for each |
@@ -167,7 +168,8 @@ notes held by the plug-ins after it, since their note-offs would no longer reach
 `midi(bytes, when?)` sends one raw MIDI message, any kind, sysex included, timed like `noteOn`. A note-on or note-off
 becomes a note, exactly as `noteOn` and `noteOff` would. `connectMidi()` sends every message from every MIDI input the
 same way. Sysex from inputs needs `connectMidi({ sysex: true })`, which asks the browser for sysex access (most show a
-prompt). A CC mapped with `mapCC` moves its parameter and isn't sent on to the plug-in.
+prompt). A CC mapped with `mapCC` moves its parameter and isn't sent on to the plug-in, and the plug-in is told the parameter
+is mapped (`indicate`), until `unmapCC`.
 
 - Each plug-in gets notes in the dialect its note input prefers (CLAP's note ports): CLAP notes, or MIDI note
   messages. A plug-in that takes only MIDI 2 gets MIDI 1 messages in MIDI 2 packets (UMP message type 2). MIDI can't

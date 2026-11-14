@@ -168,6 +168,14 @@ export interface VoiceInfo {
     overlapping: boolean;
 }
 
+// What the host shows on a parameter, for a plug-in to show too (CLAP's param_indication): a control it's mapped to
+// (null when it's unmapped), and its automation. Colours are "#rrggbb" or "#rrggbbaa". What's left out stays as it was.
+export interface Indication {
+    mapping?: { label: string; description: string; colour?: string } | null;
+    automation?: "none" | "present" | "playing" | "recording" | "overriding";
+    automationColour?: string;
+}
+
 // A drum machine's "Kick" on key 36; -1 means any port, key or channel.
 export interface NoteName {
     name: string;

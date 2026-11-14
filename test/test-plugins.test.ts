@@ -13,9 +13,10 @@ import {
 import { OutputList } from "../src/plugin/clap-host-callbacks.ts";
 import { PluginMain } from "../src/plugin/plugin-main-thread.ts";
 import { Plugin } from "../src/plugin/plugin-one-thread.ts";
-import type { Change, Event, MainOptions } from "../src/plugin/plugin-types.ts";
+import type { Change, Event, Indication, MainOptions } from "../src/plugin/plugin-types.ts";
 import { Instance } from "../src/plugin/wasm-instance.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
+import { mainCall } from "../src/threads/main-thread-calls.ts";
 import { Chain } from "../src/worklet/chain.ts";
 import type { Processor } from "../src/worklet/plugin-runner.ts";
 import { fetchFixture, TEST_PLUGINS } from "./fetch-fixture.ts";
@@ -585,12 +586,30 @@ test("param-indication: two stereo outputs, every channel -1 until the host indi
     plugin.destroy();
 });
 
-test("param-indication: mapping a parameter to a control and automating it are indicated, then cleared", {
-    todo: "wclap-ts never calls param_indication.set_mapping or set_automation (plan: Small gaps, as fixtures need them)",
-}, async () => {
+test("param-indication: mapping a parameter to a control and automating it are indicated, with colours, then cleared", async () => {
     const plugin = await load("param-indication");
-    // Mapped to a control (a MIDI CC, say, through Midi.mapCC on the page), output 0 reads 1 on the left.
-    assert.deepEqual(held(plugin.process(16))[0]?.[0], 1);
+    const indicate = (indication: Indication) => mainCall(plugin.main, { call: "indicate", id: 1, ...indication });
+    const orange = 0xff8000;
+    indicate({ mapping: { label: "CC 74", description: "MIDI CC 74", colour: "#ff8000" } });
+    assert.deepEqual(held(plugin.process(16)), [
+        [1, orange],
+        [-1, -1],
+    ]);
+    indicate({ automation: "playing", automationColour: "#0080ffff" });
+    assert.deepEqual(held(plugin.process(16)), [
+        [1, orange],
+        [2, 0x0080ff],
+    ]);
+    indicate({ automation: "recording" });
+    assert.deepEqual(held(plugin.process(16))[1], [3, -1], "no colour");
+    indicate({ automation: "overriding", automationColour: "#ff800000" });
+    assert.deepEqual(held(plugin.process(16))[1], [4, -1], "a transparent colour shows nothing");
+    indicate({ mapping: null, automation: "none" });
+    assert.deepEqual(held(plugin.process(16)), [
+        [0, -1],
+        [0, -1],
+    ]);
+    assert.throws(() => indicate({ automation: "present", automationColour: "orange" }), /isn't a colour/);
     plugin.destroy();
 });
 

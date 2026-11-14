@@ -2,6 +2,7 @@
 
 import type {
     Change,
+    Indication,
     InterfaceInfo,
     NoteName,
     ParamInfo,
@@ -186,6 +187,12 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
     // Shapes one sounding note: CLAP_NOTE_EXPRESSION_* (tuning in semitones, pressure 0..1, and so on).
     expression(expression: number, key: number, value: number, when?: number, channel = 0): boolean {
         return this.host.schedule({ type: "expression", expression, key, value, channel }, when, this.id);
+    }
+
+    // Tells the plug-in how the page shows a parameter, so its interface can show it too: a control it's mapped to,
+    // or its automation's state. A plug-in without param_indication ignores it.
+    indicate(id: number, indication: Indication): Promise<void> {
+        return this.call({ call: "indicate", id, ...indication });
     }
 
     remoteControls(): Promise<RemoteControlsPage[]> {

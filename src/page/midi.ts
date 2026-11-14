@@ -37,13 +37,20 @@ export class Midi {
     }
 
     // A controller's CC moves a plug-in's parameter across its range (on every channel unless one is given), and
-    // isn't passed on as MIDI: the knob is that parameter's.
+    // isn't passed on as MIDI: the knob is that parameter's. The plug-in is told, for its interface to show.
     mapCC(cc: number, plugin: WclapPlugin, paramId: number, channel = -1): void {
+        this.unmapCC(cc, channel);
         this.#cc.set(`${channel}:${cc}`, { plugin, id: paramId });
+        const on = channel < 0 ? "" : ` on channel ${channel + 1}`;
+        const mapping = { label: `CC ${cc}`, description: `MIDI CC ${cc}${on}` };
+        plugin.indicate(paramId, { mapping }).catch(() => undefined);
     }
 
     unmapCC(cc: number, channel = -1): void {
+        const mapped = this.#cc.get(`${channel}:${cc}`);
+        if (!mapped) return;
         this.#cc.delete(`${channel}:${cc}`);
+        mapped.plugin.indicate(mapped.id, { mapping: null }).catch(() => undefined);
     }
 
     // The MIDI leaving the host, to a MIDI output at the time it plays. Returns a function that stops.
