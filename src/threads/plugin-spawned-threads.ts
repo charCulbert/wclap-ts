@@ -1,6 +1,7 @@
 // Threads a plug-in starts itself (wasi-threads' thread-spawn, behind pthread_create). Each runs in its own Worker,
 // on a fresh instance over the plug-in's shared memory, entered through the module's own wasi_thread_start, which
 // sets up the stack and thread-local storage libc gave it.
+import { type MaybeShared, sharedBuffer } from "../events/shared-buffer.ts";
 import { installHost, OutputList } from "../plugin/clap-host-callbacks.ts";
 import type { Log } from "../plugin/plugin-types.ts";
 import { Instance } from "../plugin/wasm-instance.ts";
@@ -9,14 +10,14 @@ import { Control } from "./control-block.ts";
 // Thread IDs for one plug-in, shared by all its instances. wasi-libc gives its first thread 0x3fffffff so that IDs
 // a host hands out (1 to 0x1fffffff, as wasi-threads allows) never collide with it.
 export class ThreadIds {
-    readonly buffer: SharedArrayBuffer;
+    readonly buffer: MaybeShared;
     readonly #ids: Int32Array;
 
     static create(): ThreadIds {
-        return new ThreadIds(new SharedArrayBuffer(4));
+        return new ThreadIds(sharedBuffer(4));
     }
 
-    constructor(buffer: SharedArrayBuffer) {
+    constructor(buffer: MaybeShared) {
         this.buffer = buffer;
         this.#ids = new Int32Array(buffer);
     }
@@ -34,8 +35,8 @@ export interface ThreadStart {
     memory: WebAssembly.Memory;
     files?: Map<string, Uint8Array> | undefined;
     // Requests the plug-in makes from the thread reach its main side here.
-    control: SharedArrayBuffer;
-    ids: SharedArrayBuffer;
+    control: MaybeShared;
+    ids: MaybeShared;
     // The host's extensions as the main instance wrote them, if it has yet.
     extensions: [string, number][];
     tid: number;

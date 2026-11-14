@@ -17,7 +17,7 @@ npm install github:charCulbert/wclap-ts   # builds itself on install
 
 The type declarations need TypeScript 5.7 or later.
 
-Serve your pages with these two headers, which shared memory needs:
+Serve your pages with these two headers, which shared memory needs (without them, see below):
 
 ```
 Cross-Origin-Opener-Policy: same-origin
@@ -66,6 +66,10 @@ npx wclap-ts setup --sw public
 import { isolate } from "wclap-ts";
 await isolate(); // registers wclap-sw.js beside the page
 ```
+
+With neither, wclap-ts still runs plug-ins that have their own memory (one thread, like HeadlessGain): events go to
+the audio thread by `postMessage`, still on their frames, with a longer default `lead` (1024 frames), and a warning
+is logged once. Plug-ins built with shared memory need the headers and are refused with an error saying so.
 
 ## A chain
 

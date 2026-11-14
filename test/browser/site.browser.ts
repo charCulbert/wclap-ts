@@ -644,3 +644,48 @@ test("two plug-ins' interfaces on two origins can't reach the page or each other
     assert.deepEqual(errors, []);
     await page.context().close();
 });
+
+test("without the headers: a plug-in with its own memory plays, with a warning; one with shared memory is refused", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await open(plain.url, "test/harness.html");
+    await page.mouse.click(1, 1);
+    await page.waitForFunction(() => "wclap" in window);
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        const context = new AudioContext();
+        const logs: string[] = [];
+        const chain = await wclap.createChain(context, {
+            onLog: (message, severity) => void logs.push(`${severity}: ${message}`),
+        });
+        chain.connect(context.destination);
+        const tone = new OscillatorNode(context, { frequency: 220 });
+        tone.connect(chain.node);
+        tone.start();
+        const gain = await chain.add("/fixtures/HeadlessGain.wclap.tar.gz");
+        const id = gain.params[0]?.id ?? 0;
+        // A parameter change goes to the audio thread and back as a value event, by postMessage both ways.
+        const seen = new Promise<number>((resolve) =>
+            gain.addEventListener("value", (e) => resolve(e.detail.value), { once: true }),
+        );
+        gain.param(id, 0.5);
+        await sleep(800);
+        const refused = await chain
+            .add("/fixtures/PICOH-101.wclap.tar.gz")
+            .then(() => "loaded")
+            .catch((error: Error) => error.message);
+        return {
+            isolated: crossOriginIsolated,
+            warned: logs.some((l) => l.startsWith("warning: wclap-ts runs without cross-origin isolation")),
+            value: await Promise.race([seen, sleep(1000).then(() => -1)]),
+            refused,
+        };
+    });
+    assert.equal(r.isolated, false);
+    assert.ok(r.warned, "a warning once");
+    assert.equal(r.value, 0.5, "the parameter reached the audio thread and its value came back");
+    assert.ok((await peak(page)) > 1e-3, "silent");
+    assert.match(r.refused, /imports shared memory, which needs cross-origin isolation/);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});

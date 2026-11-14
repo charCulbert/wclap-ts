@@ -29,9 +29,10 @@ declare const sampleRate: number;
 declare const currentFrame: number;
 
 export interface ProcessorOptions {
-    queue: SharedArrayBuffer;
+    // Shared with the page; without cross-origin isolation, left out, and events come by postMessage instead.
+    queue?: SharedArrayBuffer;
     // What plug-ins send back to the page: their own parameter changes, and notes leaving the chain.
-    back: SharedArrayBuffer;
+    back?: SharedArrayBuffer;
     maxFrames: number;
     // Whatever the page passed for the arrangement (HostOptions.topology).
     topology?: unknown;
@@ -68,6 +69,8 @@ export type ToProcessor =
     | { type: "move"; id: number; index: number }
     | { type: "enable"; id: number; on: boolean }
     | { type: "reset"; id: number }
+    // Without shared memory: queue entries the page wrote, to put in this side's queue.
+    | { type: "events"; entries: Float64Array }
     | { type: "transport"; anchor: TransportAnchor }
     | { type: "call"; id: number; callId: number; call: MainCall }
     | { type: "message"; data: unknown }
@@ -98,6 +101,8 @@ export type FromProcessor =
     | { type: "result"; callId: number; value: unknown }
     | { type: "error"; message: string; id?: number; callId?: number }
     | { type: "stats"; stats: Stats }
+    // Without shared memory: entries for the page's side of the queue back.
+    | { type: "back"; entries: Float64Array }
     | { type: "message"; data: unknown };
 
 const STALL_MS = 20;
@@ -118,6 +123,10 @@ class HostProcessor extends Base {
     readonly #transport: Transport = this.#clock.transport;
     // Every plug-in here, routed or not.
     readonly #slots = new Map<number, Slot>();
+    readonly #queue: EventQueue;
+    // Without shared memory, the queue back to the page, posted after each block; and entries that didn't fit here.
+    readonly #back: EventQueue | null;
+    #relayDropped = 0;
     // Made ready for an edit, not yet routed.
     readonly #prepared = new Map<number, Slot>();
     // An edit waiting for its fade-out block, and whether the next block fades in.
@@ -142,11 +151,13 @@ class HostProcessor extends Base {
         super();
         const o = options.processorOptions as ProcessorOptions;
         this.#maxFrames = o.maxFrames;
-        this.#scheduler = new Scheduler(new EventQueue(o.queue));
+        this.#queue = o.queue ? new EventQueue(o.queue) : EventQueue.create();
+        this.#scheduler = new Scheduler(this.#queue);
         this.#runner = new Runner(this.#transport);
         this.#runner.failure = o.onFailure ?? "pass";
         this.#runner.onFailure = (id, error) => this.#send({ type: "failed", id, message: describe(error) });
-        const back = new EventQueue(o.back);
+        const back = o.back ? new EventQueue(o.back) : EventQueue.create();
+        this.#back = o.back ? null : back;
         const notesOut = (blockStart: number, notes: readonly Event[], count: number) => {
             for (let i = 0; i < count; i++) {
                 const e = notes[i];
@@ -226,6 +237,9 @@ class HostProcessor extends Base {
                     this.#chain.setEnabled?.(m.id, m.on);
                     return;
                 }
+                case "events":
+                    if (!this.#queue.putEntries(m.entries)) this.#relayDropped += m.entries.length / 7;
+                    return;
                 case "reset":
                     this.#slots.get(m.id)?.processor.reset?.();
                     return;
@@ -379,6 +393,8 @@ class HostProcessor extends Base {
                 this.#send({ type: "error", message: `a block failed on the audio thread: ${message}` });
             }
         }
+        const entries = this.#back?.takeEntries();
+        if (entries) this.#send({ type: "back", entries }, [entries.buffer]);
         // A block has run without them.
         while (this.#removed.length) this.#removed.pop()?.destroy();
         const gap = this.#lastEnd ? begin - this.#lastEnd : 0;
@@ -388,7 +404,7 @@ class HostProcessor extends Base {
         if (gap > s.worstGapMs) s.worstGapMs = gap;
         if (this.#lastEnd - begin > s.worstRenderMs) s.worstRenderMs = this.#lastEnd - begin;
         s.late = this.#scheduler.late;
-        s.dropped = this.#scheduler.dropped + this.#backDropped;
+        s.dropped = this.#scheduler.dropped + this.#backDropped + Math.floor(this.#relayDropped);
         if (currentFrame - this.#reportedAt >= sampleRate) {
             const key = `${s.late} ${s.dropped} ${s.stalls} ${s.worstGapMs} ${s.worstRenderMs}`;
             if (key !== this.#reported) {

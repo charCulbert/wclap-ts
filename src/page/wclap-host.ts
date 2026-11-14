@@ -3,6 +3,7 @@
 
 import { EventQueue, MAX_MIDI_BYTES, type Timed } from "../events/event-queue.ts";
 import { Clock } from "../events/live-event-clock.ts";
+import { canShare } from "../events/shared-buffer.ts";
 import { midiLength } from "../plugin/clap-host-callbacks.ts";
 import type { LogSeverity, StateContext } from "../plugin/plugin-types.ts";
 import { canAttach } from "../plugin/wasm-instance.ts";
@@ -110,10 +111,12 @@ export class WclapHost extends TypedTarget<HostEvents> {
     readonly #midi = new Midi(this);
 
     static async create(context: BaseAudioContext, options: HostOptions = {}): Promise<WclapHost> {
-        if (!globalThis.crossOriginIsolated)
-            throw new Error(
-                "wclap-ts needs cross-origin isolation: serve the page with Cross-Origin-Opener-Policy: same-origin " +
-                    "and Cross-Origin-Embedder-Policy: require-corp, or call isolate() first",
+        if (!canShare())
+            (options.onLog ?? ((m: string) => console.warn(m)))(
+                "wclap-ts runs without cross-origin isolation: events go by postMessage with a longer lead, and only " +
+                    "plug-ins with their own memory load. Serve the page with Cross-Origin-Opener-Policy: same-origin " +
+                    "and Cross-Origin-Embedder-Policy: require-corp, or call isolate() first.",
+                "warning",
             );
         const base = new URL(String(options.base ?? new URL(".", import.meta.url)), location.href);
         const loaded = modules.get(context) ?? new Map<string, Promise<void>>();
@@ -131,9 +134,11 @@ export class WclapHost extends TypedTarget<HostEvents> {
         this.options = options;
         this.#queue = EventQueue.create();
         const back = EventQueue.create();
+        const shared = canShare();
         const processorOptions: ProcessorOptions = {
-            queue: this.#queue.buffer,
-            back: back.buffer,
+            ...(shared
+                ? { queue: this.#queue.buffer as SharedArrayBuffer, back: back.buffer as SharedArrayBuffer }
+                : {}),
             maxFrames: 128,
             topology: options.topology,
             ...(options.onFailure ? { onFailure: options.onFailure } : {}),
@@ -171,7 +176,9 @@ export class WclapHost extends TypedTarget<HostEvents> {
             if (m.type === "log") options.onLog?.(m.text, m.severity);
             else if (m.type === "message") this.dispatchEvent(new CustomEvent("message", { detail: m.data }));
             else if (m.type === "spawn") this.startThread(m.id, m.start);
-            else if (m.type === "stats") options.onStats?.({ ...m.stats, dropped: m.stats.dropped + this.#dropped });
+            else if (m.type === "back") {
+                if (!back.putEntries(m.entries)) this.#dropped++;
+            } else if (m.type === "stats") options.onStats?.({ ...m.stats, dropped: m.stats.dropped + this.#dropped });
             else if (m.type === "failed") {
                 const plugin = plugins.get(m.id);
                 plugin?.markFailed();
@@ -183,7 +190,8 @@ export class WclapHost extends TypedTarget<HostEvents> {
                 }
             } else if (m.type === "error") (options.onError ?? console.error)(m.message, plugins.get(m.id ?? -1));
         };
-        this.clock = new Clock(context, options.lead ?? 256 / context.sampleRate);
+        // Without shared memory an event also waits for a message to cross: a longer default lead.
+        this.clock = new Clock(context, options.lead ?? (shared ? 256 : 1024) / context.sampleRate);
         this.transport = options.transport ?? new Transport(context);
         this.#unfollow = this.transport.follow((anchor) => this.#audio.post({ type: "transport", anchor }));
     }
@@ -343,6 +351,11 @@ export class WclapHost extends TypedTarget<HostEvents> {
                 ? source
                 : await openBundle(await fetchBytes(source), { maxMemoryMB });
         const bundle = capMemory(opened, maxMemoryMB);
+        if (bundle.memory?.shared && !canShare())
+            throw new Error(
+                "this plug-in imports shared memory, which needs cross-origin isolation: serve the page with " +
+                    "Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp, or call isolate() first",
+            );
         const id = nextPluginId();
         const threads = options.threads ?? this.options.threads ?? "auto";
         let why = threads === "one" ? 'threads: "one" was asked for' : "";
@@ -469,7 +482,20 @@ export class WclapHost extends TypedTarget<HostEvents> {
             const r = this.#retry[0];
             if (!r || !this.#queue.push(r.frame, r.event, r.target, r.live)) return;
             this.#retry.shift();
+            this.#relay();
         }
+    }
+
+    // Without shared memory, what was pushed goes to the audio thread together, once the calls in hand are done.
+    #relaying = false;
+    #relay(): void {
+        if (canShare() || this.#relaying) return;
+        this.#relaying = true;
+        queueMicrotask(() => {
+            this.#relaying = false;
+            const entries = this.#queue.takeEntries();
+            if (entries) this.#audio.post({ type: "events", entries }, [entries.buffer]);
+        });
     }
 
     // `when`: AudioContext time for an exact frame; without it, now (constant latency), and the event is live
@@ -479,7 +505,10 @@ export class WclapHost extends TypedTarget<HostEvents> {
         const frame = when === undefined ? this.clock.frameAt(sourceMs) : Math.round(when * this.context.sampleRate);
         const live = event.live ?? when === undefined;
         this.#sendRetries();
-        if (this.#queue.push(frame, event, target, live)) return true;
+        if (this.#queue.push(frame, event, target, live)) {
+            this.#relay();
+            return true;
+        }
         if (event.type === "note-off" || event.type === "note-choke") {
             this.#retry.push({ frame, event: { ...event }, target, live });
             return true;

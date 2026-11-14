@@ -1,6 +1,7 @@
 // One plug-in on two threads: MainThread runs CLAP's main-thread role on one instance (in a Worker), AudioSide the
 // audio role on a second instance over the same memory (a slot in the AudioWorklet's chain). They share the
 // memory and a Control block; the audio side never waits on the main side.
+import type { MaybeShared } from "../events/shared-buffer.ts";
 
 import { installHost, OutputList } from "../plugin/clap-host-callbacks.ts";
 import { PluginAudio } from "../plugin/plugin-audio-thread.ts";
@@ -29,8 +30,8 @@ export interface AudioStart {
     memory: WebAssembly.Memory;
     thread: ThreadSetup;
     setup: AudioSetup;
-    control: SharedArrayBuffer;
-    ids: SharedArrayBuffer;
+    control: MaybeShared;
+    ids: MaybeShared;
 }
 
 export interface Started {

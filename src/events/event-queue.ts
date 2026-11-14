@@ -3,6 +3,7 @@
 import { BLOCK_MIDI_BYTES, MAX_EVENTS, MAX_MIDI_BYTES } from "../plugin/clap-host-callbacks.ts";
 import type { Event } from "../plugin/plugin-types.ts";
 import { HeldNotes } from "./held-notes.ts";
+import { type MaybeShared, sharedBuffer } from "./shared-buffer.ts";
 
 // An event without its frame in a block: the queue stamps it with an audio frame instead. Note IDs aren't carried:
 // the scheduler gives them out (a NOTE_END only ever comes from a plug-in).
@@ -49,16 +50,16 @@ const MAX_NOTE_ID = 0x7fffffff;
 
 // A ring of entries with one slot always free, so "full" and "empty" differ; the two indices are atomics.
 export class EventQueue {
-    readonly buffer: SharedArrayBuffer;
+    readonly buffer: MaybeShared;
     readonly capacity: number;
     readonly #indices: Int32Array;
     readonly #entries: Float64Array;
 
     static create(capacity = 1024): EventQueue {
-        return new EventQueue(new SharedArrayBuffer(8 + (capacity + 1) * FIELDS * 8));
+        return new EventQueue(sharedBuffer(8 + (capacity + 1) * FIELDS * 8));
     }
 
-    constructor(buffer: SharedArrayBuffer) {
+    constructor(buffer: MaybeShared) {
         this.buffer = buffer;
         this.#indices = new Int32Array(buffer, 0, 2);
         this.#entries = new Float64Array(buffer, 8);
@@ -141,6 +142,28 @@ export class EventQueue {
             }
         });
         if (midi && filled === midi.size) take(frame, midi);
+    }
+
+    // Without shared memory, the queue's two sides are copies in two places: the writer's side takes its waiting
+    // entries out as they are, to post, and the reader's side puts them in. False if they didn't all fit (the rest
+    // are dropped, counted by the caller).
+    takeEntries(): Float64Array | null {
+        const chunks: number[] = [];
+        this.read((e, at) => {
+            for (let f = 0; f < FIELDS; f++) chunks.push(e[at + f] ?? 0);
+        });
+        return chunks.length ? Float64Array.from(chunks) : null;
+    }
+
+    putEntries(entries: Float64Array): boolean {
+        const slots = this.capacity + 1;
+        const write = Atomics.load(this.#indices, 0);
+        const count = entries.length / FIELDS;
+        if ((Atomics.load(this.#indices, 1) - write - 1 + slots) % slots < count) return false;
+        for (let k = 0; k < count; k++)
+            this.#entries.set(entries.subarray(k * FIELDS, (k + 1) * FIELDS), ((write + k) % slots) * FIELDS);
+        Atomics.store(this.#indices, 0, (write + count) % slots);
+        return true;
     }
 
     // Reader side: hands each waiting entry to `take` (its fields), oldest first.

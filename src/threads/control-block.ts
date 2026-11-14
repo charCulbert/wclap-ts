@@ -1,5 +1,6 @@
 // What the main side and the audio side of one plug-in share besides its memory: where the plug-in is in its
 // lifecycle, and the requests the audio side makes of the main side. The audio side never waits on either.
+import { type MaybeShared, sharedBuffer } from "../events/shared-buffer.ts";
 import type { Request } from "../plugin/clap-host-callbacks.ts";
 
 const STATE = 0;
@@ -27,14 +28,14 @@ const BITS: Record<Request, number> = {
 };
 
 export class Control {
-    readonly buffer: SharedArrayBuffer;
+    readonly buffer: MaybeShared;
     readonly #ints: Int32Array;
 
     static create(): Control {
-        return new Control(new SharedArrayBuffer(12));
+        return new Control(sharedBuffer(12));
     }
 
-    constructor(buffer: SharedArrayBuffer) {
+    constructor(buffer: MaybeShared) {
         this.buffer = buffer;
         this.#ints = new Int32Array(buffer);
     }

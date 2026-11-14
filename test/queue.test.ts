@@ -117,3 +117,27 @@ test("a burst larger than one block's limit is split across blocks, never refuse
     assert.equal(s.late, 44);
     assert.equal(first, second, "the same result object, reused");
 });
+
+test("without shared memory: entries taken from the writer's copy and put in the reader's arrive as written", () => {
+    const writer = new EventQueue(new ArrayBuffer(8 + 65 * 7 * 8));
+    const reader = new EventQueue(new ArrayBuffer(8 + 65 * 7 * 8));
+    const sysex = Uint8Array.from({ length: 100 }, (_, i) => (i === 0 ? 0xf0 : i === 99 ? 0xf7 : i));
+    writer.push(10, { type: "note-on", key: 60, velocity: 0.5, channel: 3 }, 2, true);
+    writer.push(20, { type: "midi", data: sysex, offset: 0, size: sysex.length });
+    writer.push(30, { type: "param", id: 7, value: 0.25 });
+    const entries = writer.takeEntries();
+    assert.ok(entries);
+    assert.equal(writer.takeEntries(), null, "taken once");
+    assert.ok(reader.putEntries(entries));
+    const got: unknown[] = [];
+    reader.drain((frame, e) =>
+        got.push(e.type === "midi" ? [frame, e.type, [...e.data]] : [frame, e.type, e.target, e.live ?? false]),
+    );
+    assert.deepEqual(got, [
+        [10, "note-on", 2, true],
+        [20, "midi", [...sysex]],
+        [30, "param", -1, false],
+    ]);
+    const full = new EventQueue(new ArrayBuffer(8 + 3 * 7 * 8));
+    assert.equal(full.putEntries(entries), false, "more than fit: none put");
+});
