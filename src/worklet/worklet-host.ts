@@ -56,8 +56,12 @@ export type ToProcessor =
           files?: Map<string, Uint8Array>;
           pluginId?: string;
           offline?: boolean;
+          // Made ready but not routed, for an edit's apply.
+          prepare?: boolean;
       }
-    | { type: "add-two"; id: number; index?: number; audio: AudioStart; ports: Ports }
+    | { type: "add-two"; id: number; index?: number; audio: AudioStart; ports: Ports; prepare?: boolean }
+    | { type: "apply"; callId: number; steps: EditStep[]; fade: boolean }
+    | { type: "discard"; ids: number[] }
     | { type: "remove"; id: number }
     | { type: "move"; id: number; index: number }
     | { type: "enable"; id: number; on: boolean }
@@ -65,6 +69,13 @@ export type ToProcessor =
     | { type: "call"; id: number; callId: number; call: MainCall }
     | { type: "message"; data: unknown }
     | { type: "destroy" };
+
+// One step of an edit, applied in order with the rest on one block boundary.
+export type EditStep =
+    | { op: "add"; id: number; index?: number }
+    | { op: "remove"; id: number }
+    | { op: "move"; id: number; index: number }
+    | { op: "message"; data: unknown };
 
 export interface Stats {
     late: number;
@@ -79,6 +90,7 @@ export interface Stats {
 export type FromProcessor =
     | FromMain
     | { type: "added"; id: number; info?: Info }
+    | { type: "applied"; callId: number }
     | { type: "failed"; id: number; message: string }
     | { type: "result"; callId: number; value: unknown }
     | { type: "error"; message: string; id?: number; callId?: number }
@@ -86,6 +98,13 @@ export type FromProcessor =
     | { type: "message"; data: unknown };
 
 const STALL_MS = 20;
+
+// A linear fade over the block, out or in.
+function fade(outputs: Float32Array[][], frames: number, out: boolean): void {
+    for (const output of outputs)
+        for (const channel of output)
+            for (let i = 0; i < frames; i++) channel[i] = (channel[i] ?? 0) * (out ? 1 - i / frames : i / frames);
+}
 const describe = (error: unknown) => (error instanceof Error ? (error.stack ?? error.message) : String(error));
 
 class HostProcessor extends Base {
@@ -96,6 +115,13 @@ class HostProcessor extends Base {
     readonly #transport: Transport = this.#clock.transport;
     // Every plug-in here, routed or not.
     readonly #slots = new Map<number, Slot>();
+    // Made ready for an edit, not yet routed.
+    readonly #prepared = new Map<number, Slot>();
+    // An edit waiting for its fade-out block, and whether the next block fades in.
+    #fading: Extract<ToProcessor, { type: "apply" }> | null = null;
+    #fadeIn = false;
+    // Plug-ins taken out, destroyed once a block has run without them.
+    readonly #removed: Plugin[] = [];
     // This block's events, taken once; the arrangement's take() gets the same.
     #block: { events: readonly Event[]; count: number } = { events: [], count: 0 };
     readonly #maxFrames: number;
@@ -159,18 +185,28 @@ class HostProcessor extends Base {
                     const processor = new AudioSide(m.audio, log, (start) =>
                         this.#send({ type: "spawn", id: m.id, start }),
                     );
-                    this.#add({ id: m.id, processor, ports: m.ports, enabled: true, failed: false }, m.index);
+                    const slot = { id: m.id, processor, ports: m.ports, enabled: true, failed: false };
+                    if (m.prepare) this.#prepared.set(m.id, slot);
+                    else this.#add(slot, m.index);
                     this.#send({ type: "added", id: m.id });
                     return;
                 }
-                case "remove": {
-                    this.#chain.remove(m.id);
-                    this.#slots.delete(m.id);
-                    this.#runner.remove(m.id);
-                    this.#local.get(m.id)?.destroy();
-                    this.#local.delete(m.id);
+                case "remove":
+                    this.#remove(m.id);
                     return;
-                }
+                case "apply":
+                    this.#check(m.steps);
+                    // Without a fade it applies now, between blocks; with one, after a block fading out.
+                    if (m.fade) this.#fading = m;
+                    else this.#apply(m);
+                    return;
+                case "discard":
+                    for (const id of m.ids) {
+                        this.#prepared.delete(id);
+                        this.#local.get(id)?.destroy();
+                        this.#local.delete(id);
+                    }
+                    return;
                 case "move":
                     if (!this.#chain.move) throw new Error("this arrangement has no order to move plug-ins in");
                     this.#chain.move(m.id, m.index);
@@ -203,6 +239,7 @@ class HostProcessor extends Base {
                 }
                 case "destroy":
                     this.#destroyed = true;
+                    while (this.#removed.length) this.#removed.pop()?.destroy();
                     for (const [id, plugin] of this.#local) {
                         this.#chain.remove(id);
                         this.#slots.delete(id);
@@ -250,7 +287,9 @@ class HostProcessor extends Base {
         const plugin = Plugin.wrap(main);
         plugin.activate(sampleRate, this.#maxFrames);
         this.#local.set(id, plugin);
-        this.#add({ id, processor: plugin, ports: main.ports, enabled: true, failed: false }, m.index);
+        const slot = { id, processor: plugin, ports: main.ports, enabled: true, failed: false };
+        if (m.prepare) this.#prepared.set(id, slot);
+        else this.#add(slot, m.index);
         this.#send({ type: "added", id, info: { descriptor, params: main.params(), ports: main.ports } });
     }
 
@@ -258,6 +297,41 @@ class HostProcessor extends Base {
         this.#slots.set(slot.id, slot);
         this.#runner.add(slot.id);
         this.#chain.add(slot, index);
+    }
+
+    #remove(id: number): void {
+        this.#chain.remove(id);
+        this.#slots.delete(id);
+        this.#runner.remove(id);
+        const plugin = this.#local.get(id);
+        if (plugin) this.#removed.push(plugin);
+        this.#local.delete(id);
+    }
+
+    // Before anything changes: an edit applies whole or not at all.
+    #check(steps: EditStep[]): void {
+        const ids = new Set(this.#slots.keys());
+        for (const step of steps) {
+            if (step.op === "add") {
+                if (!this.#prepared.has(step.id)) throw new Error(`plug-in ${step.id} wasn't prepared`);
+                ids.add(step.id);
+            } else if (step.op === "remove" && !ids.delete(step.id)) throw new Error(`no plug-in ${step.id} to remove`);
+            else if (step.op === "move" && !this.#chain.move)
+                throw new Error("this arrangement has no order to move plug-ins in");
+        }
+    }
+
+    #apply(m: Extract<ToProcessor, { type: "apply" }>): void {
+        for (const step of m.steps) {
+            if (step.op === "add") {
+                const slot = this.#prepared.get(step.id) as Slot;
+                this.#prepared.delete(step.id);
+                this.#add(slot, step.index);
+            } else if (step.op === "remove") this.#remove(step.id);
+            else if (step.op === "move") this.#chain.move?.(step.id, step.index);
+            else this.#chain.message?.(step.data);
+        }
+        this.#send({ type: "applied", callId: m.callId });
     }
 
     #lastError = "";
@@ -275,6 +349,21 @@ class HostProcessor extends Base {
             this.#runner.beginBlock();
             this.#chain.render(currentFrame, frames, inputs, outputs);
             this.#runner.endBlock(this.#slots.values(), this.#block.events, this.#block.count);
+            if (this.#fadeIn) fade(outputs, frames, false);
+            this.#fadeIn = false;
+            const edit = this.#fading;
+            if (edit) {
+                this.#fading = null;
+                fade(outputs, frames, true);
+                this.#fadeIn = true;
+                // Checked again: messages since may have changed what it applies to.
+                try {
+                    this.#check(edit.steps);
+                    this.#apply(edit);
+                } catch (error) {
+                    this.#send({ type: "error", message: describe(error), callId: edit.callId });
+                }
+            }
         } catch (error) {
             for (const output of outputs) for (const channel of output) channel.fill(0);
             const message = describe(error);
@@ -283,6 +372,8 @@ class HostProcessor extends Base {
                 this.#send({ type: "error", message: `a block failed on the audio thread: ${message}` });
             }
         }
+        // A block has run without them.
+        while (this.#removed.length) this.#removed.pop()?.destroy();
         const gap = this.#lastEnd ? begin - this.#lastEnd : 0;
         this.#lastEnd = Date.now();
         const s = this.#stats;

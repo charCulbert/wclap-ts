@@ -97,6 +97,23 @@ its output is silence, and its time (`steady_time`) still moves on. Bypass, rese
 
 A plug-in that crashes (in WebAssembly, a trap) goes silent and is marked `failed`; the rest play on.
 
+Several changes can go in as one edit, which applies on a single block boundary:
+
+```ts
+await chain.edit(
+    async (e) => {
+        const reverb = await e.add("/plugins/Reverb.wclap.tar.gz"); // loaded and started, not yet playing
+        e.remove(delay);
+        e.move(reverb, 1);
+    },
+    { fade: true }, // dip the output over a block either side, so the change doesn't click
+);
+```
+
+If the function throws or a plug-in fails to load, nothing changes and the new plug-ins are let go. Removed
+plug-ins are destroyed after a block has run without them. Edits apply one after another; `add` and `remove` are
+one-step edits.
+
 ## Several chains: A/B, tracks and sends
 
 Chains are Web Audio nodes, so ordinary nodes connect them. Every chain on a context schedules on the same clock:
@@ -223,9 +240,6 @@ is mapped (`indicate`), until `unmapCC`.
   `"warning"`.
 - `onStats` (a chain option) reports, about once a second when anything changed: events that arrived too late for
   their frame, events dropped, audio stalls over 20 ms, the longest gap between blocks and the longest block.
-- `chain.remove(plugin)` waits for the plug-in to stop on the audio thread before destroying it, up to 2 s if the
-  AudioContext is suspended; a plug-in that can't be stopped safely is left alone rather than destroyed under the
-  audio thread.
 
 ## Threads
 

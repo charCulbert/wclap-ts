@@ -99,3 +99,97 @@ test("an arrangement that throws gives a silent block, says so once, and is trie
     assert.equal(errors.length, 1);
     assert.match(errors[0]?.message ?? "", /a block failed on the audio thread: Error: a broken graph/);
 });
+
+test("an edit: prepared plug-ins wait unrouted, then every step applies at once; removed ones go after a block", async () => {
+    const { openBundle } = await import("../src/plugin/wclap-bundle.ts");
+    const { Plugin } = await import("../src/plugin/plugin-one-thread.ts");
+    const { readFileSync } = await import("node:fs");
+    const bundle = await openBundle(readFileSync(new URL("fixtures/HeadlessGain.wclap.tar.gz", import.meta.url)));
+    const destroy = Plugin.prototype.destroy;
+    const destroyed: number[] = [];
+    Plugin.prototype.destroy = function (this: typeof Plugin.prototype) {
+        destroyed.push(1);
+        destroy.call(this);
+    };
+    try {
+        const log: string[] = [];
+        registerWclapProcessor("edit-test", () => ({
+            add: (slot, index) => void log.push(`add ${slot.id} ${index}`),
+            remove: (id) => void log.push(`remove ${id}`),
+            move: (id, index) => void log.push(`move ${id} ${index}`),
+            message: (data) => void log.push(`message ${data}`),
+            render: () => undefined,
+        }));
+        const Processor = registered.get("edit-test");
+        assert.ok(Processor);
+        const node = new Processor({
+            processorOptions: { queue: EventQueue.create().buffer, back: EventQueue.create().buffer, maxFrames: 128 },
+        }) as unknown as Node;
+        const send = (data: unknown) => node.port.onmessage?.({ data });
+        const prepare = (id: number) =>
+            send({
+                type: "add-one",
+                id,
+                prepare: true,
+                module: bundle.module,
+                memory: bundle.memory,
+                files: bundle.files,
+            });
+        sent.length = 0;
+        prepare(101);
+        prepare(102);
+        assert.deepEqual(log, [], "prepared, not routed");
+        assert.deepEqual(
+            sent.map((m) => m.type),
+            ["added", "added"],
+        );
+
+        send({
+            type: "apply",
+            callId: -1,
+            steps: [
+                { op: "remove", id: 999 },
+                { op: "add", id: 101 },
+            ],
+            fade: false,
+        });
+        assert.deepEqual(log, [], "a step that can't apply: none do");
+        assert.equal(sent.at(-1)?.type, "error");
+
+        send({
+            type: "apply",
+            callId: -2,
+            steps: [
+                { op: "add", id: 101 },
+                { op: "add", id: 102, index: 0 },
+                { op: "message", data: "route" },
+            ],
+            fade: false,
+        });
+        assert.deepEqual(log, ["add 101 undefined", "add 102 0", "message route"]);
+        assert.deepEqual(sent.at(-1), { type: "applied", callId: -2 });
+
+        send({ type: "apply", callId: -3, steps: [{ op: "remove", id: 101 }], fade: false });
+        assert.equal(log.at(-1), "remove 101");
+        assert.equal(destroyed.length, 0, "not while the old arrangement may still be running");
+        block(node, 0);
+        assert.equal(destroyed.length, 1, "after a block without it");
+
+        prepare(103);
+        send({ type: "discard", ids: [103] });
+        assert.equal(destroyed.length, 2, "a prepared plug-in let go");
+
+        log.length = 0;
+        send({ type: "apply", callId: -4, steps: [{ op: "move", id: 102, index: 1 }], fade: true });
+        assert.deepEqual(log, [], "waits for its fade");
+        const out = block(node, 128)[0]?.[0];
+        assert.deepEqual(log, ["move 102 1"], "applied after the block fading out");
+        assert.deepEqual([out?.[0], out?.[64], out?.[127]], [1, 0.5, 1 / 128]);
+        const back = block(node, 256)[0]?.[0];
+        assert.deepEqual([back?.[0], back?.[64]], [0, 0.5], "and in again");
+        assert.equal(block(node, 384)[0]?.[0]?.[0], 1);
+        send({ type: "destroy" });
+    } finally {
+        Plugin.prototype.destroy = destroy;
+    }
+});

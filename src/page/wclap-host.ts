@@ -11,7 +11,7 @@ import type { FromThread } from "../runtime/thread.ts";
 import type { FromWorker } from "../runtime/worker.ts";
 import type { ThreadStart } from "../threads/plugin-spawned-threads.ts";
 import type { Started } from "../threads/two-threads.ts";
-import type { FromProcessor, Info, ProcessorOptions, Stats } from "../worklet/worklet-host.ts";
+import type { EditStep, FromProcessor, Info, ProcessorOptions, Stats } from "../worklet/worklet-host.ts";
 import { fetchBytes, Link, modules, nextPluginId, plugins, type Source } from "./message-link.ts";
 import { Midi } from "./midi.ts";
 import { hideInterface } from "./plugin-interface.ts";
@@ -58,6 +58,19 @@ export interface HostOptions extends ChainOptions {
     inputs?: number;
     outputs?: number[];
 }
+
+// What an edit (WclapHost.edit) can do; it all applies together once the edit's function returns.
+export interface Edit {
+    // Loads and activates the plug-in now; it starts playing with the rest of the edit.
+    add(source: Source | Bundle, options?: AddOptions): Promise<WclapPlugin>;
+    remove(plugin: WclapPlugin): void;
+    move(plugin: WclapPlugin, index: number): void;
+    // To your arrangement's Topology.message, in order with the rest.
+    send(data: unknown): void;
+}
+
+// Edits' ids, apart from calls' (which count up from 0).
+let nextEdit = -1;
 
 export interface AddOptions {
     // Which plug-in, when the bundle holds several; the first by default.
@@ -216,6 +229,105 @@ export class WclapHost extends TypedTarget<HostEvents> {
 
     // Loads a plug-in into the chain (at the end by default) while it plays.
     async add(source: Source | Bundle, options: AddOptions = {}): Promise<WclapPlugin> {
+        let plugin: WclapPlugin | undefined;
+        await this.edit(async (e) => {
+            plugin = await e.add(source, options);
+        });
+        return plugin as WclapPlugin;
+    }
+
+    async remove(plugin: WclapPlugin): Promise<void> {
+        await this.edit((e) => e.remove(plugin));
+    }
+
+    // Several changes at once: `build` prepares any new plug-ins (loaded and activated, not yet playing) and lists
+    // the rest, then all of it applies on one block boundary. If `build` throws or a plug-in fails to load, nothing
+    // applies and the new plug-ins are let go. Removed plug-ins are destroyed after a block has run without them.
+    // `fade` dips the output over a block either side of the change, for a change you'd otherwise hear click.
+    // Edits apply one after another, in the order they were asked for.
+    edit(build: (e: Edit) => Promise<void> | void, options: { fade?: boolean } = {}): Promise<void> {
+        const run = this.#editing.then(() => this.#edit(build, options.fade ?? false));
+        this.#editing = run.catch(() => undefined);
+        return run;
+    }
+
+    #editing: Promise<void> = Promise.resolve();
+
+    async #edit(build: (e: Edit) => Promise<void> | void, fade: boolean): Promise<void> {
+        const order = [...this.plugins];
+        const steps: EditStep[] = [];
+        const added: WclapPlugin[] = [];
+        const removed: WclapPlugin[] = [];
+        const edit: Edit = {
+            add: async (source, options = {}) => {
+                const plugin = await this.#prepare(source, options);
+                added.push(plugin);
+                const index = Math.min(options.index ?? order.length, order.length);
+                order.splice(index, 0, plugin);
+                steps.push({ op: "add", id: plugin.id, index });
+                return plugin;
+            },
+            remove: (plugin) => {
+                const i = order.indexOf(plugin);
+                if (i < 0) return;
+                order.splice(i, 1);
+                removed.push(plugin);
+                steps.push({ op: "remove", id: plugin.id });
+            },
+            move: (plugin, index) => {
+                const i = order.indexOf(plugin);
+                if (i < 0) return;
+                order.splice(i, 1);
+                order.splice(index, 0, plugin);
+                steps.push({ op: "move", id: plugin.id, index });
+            },
+            send: (data) => {
+                steps.push({ op: "message", data });
+            },
+        };
+        try {
+            await build(edit);
+            const callId = nextEdit--;
+            const structural = steps.some((step) => step.op !== "message");
+            // A closed context's audio thread has gone, and its plug-ins with it: there's only letting go left.
+            if (this.context.state === "closed") {
+                if (added.length) throw new Error("the AudioContext is closed");
+            } else
+                await this.#audio.request(
+                    { type: "apply", callId, steps, fade: fade && structural },
+                    (m) => m.type === "applied" && m.callId === callId,
+                );
+        } catch (error) {
+            await Promise.all(added.map((plugin) => this.#letGo(plugin)));
+            throw error;
+        }
+        this.plugins.splice(0, this.plugins.length, ...order);
+        for (const plugin of added) plugins.set(plugin.id, plugin);
+        for (const plugin of removed) {
+            plugins.delete(plugin.id);
+            hideInterface(plugin);
+        }
+        await Promise.all(removed.map((plugin) => this.#letGo(plugin)));
+        if (steps.some((step) => step.op !== "message")) this.latencyChanged();
+    }
+
+    // A plug-in out of the arrangement, or never in it: the audio thread lets go of its own; the Worker of a
+    // two-thread one destroys its main side, no handshake needed since its audio side no longer runs.
+    async #letGo(plugin: WclapPlugin): Promise<void> {
+        this.#audio.post({ type: "discard", ids: [plugin.id] });
+        const main = this.#workers.get(plugin.id);
+        if (!main) return;
+        await main.link
+            .request(
+                { type: "remove", id: plugin.id, audioDone: true },
+                (m) => m.type === "removed" && m.id === plugin.id,
+            )
+            .catch(() => undefined);
+        this.#stopWorker(plugin.id);
+    }
+
+    // Loaded and activated, ready for an edit to route it.
+    async #prepare(source: Source | Bundle, options: AddOptions): Promise<WclapPlugin> {
         const maxMemoryMB = options.maxMemoryMB ?? this.options.maxMemoryMB ?? 1024;
         const opened =
             typeof source === "object" && "module" in source
@@ -224,41 +336,36 @@ export class WclapHost extends TypedTarget<HostEvents> {
         const bundle = capMemory(opened, maxMemoryMB);
         const id = nextPluginId();
         const threads = options.threads ?? this.options.threads ?? "auto";
-        const at = options.index ?? this.plugins.length;
-        let plugin: WclapPlugin | undefined;
         let why = threads === "one" ? 'threads: "one" was asked for' : "";
         if (threads === "auto" && !canAttach(bundle))
             why = "it isn't built for two threads (shared memory and the thread exports, see the README)";
-        else if (threads === "auto")
-            plugin = await this.#addTwo(id, bundle, at, options).catch((error: unknown) => {
+        else if (threads === "auto") {
+            const plugin = await this.#addTwo(id, bundle, options).catch((error: unknown) => {
                 why = `two threads failed: ${error instanceof Error ? error.message : String(error)}`;
                 return undefined;
             });
-        if (!plugin) {
-            const added = await this.#audio.request<Extract<FromProcessor, { type: "added" }>>(
-                {
-                    type: "add-one",
-                    id,
-                    index: at,
-                    module: bundle.module,
-                    memory: bundle.memory,
-                    files: bundle.files,
-                    ...(options.pluginId ? { pluginId: options.pluginId } : {}),
-                    ...(this.#offline ? { offline: true } : {}),
-                },
-                (m) => m.type === "added" && m.id === id,
-            );
-            if (!added.info) throw new Error("the plug-in started without describing itself");
-            plugin = new WclapPlugin(this, id, added.info, bundle, this.#audio, "one", why);
-            this.options.onLog?.(`${added.info.descriptor.name} runs on the audio thread: ${why}`, "info", plugin);
+            if (plugin) return plugin;
         }
-        this.plugins.splice(at, 0, plugin);
-        plugins.set(id, plugin);
-        this.latencyChanged();
+        const added = await this.#audio.request<Extract<FromProcessor, { type: "added" }>>(
+            {
+                type: "add-one",
+                id,
+                prepare: true,
+                module: bundle.module,
+                memory: bundle.memory,
+                files: bundle.files,
+                ...(options.pluginId ? { pluginId: options.pluginId } : {}),
+                ...(this.#offline ? { offline: true } : {}),
+            },
+            (m) => m.type === "added" && m.id === id,
+        );
+        if (!added.info) throw new Error("the plug-in started without describing itself");
+        const plugin = new WclapPlugin(this, id, added.info, bundle, this.#audio, "one", why);
+        this.options.onLog?.(`${added.info.descriptor.name} runs on the audio thread: ${why}`, "info", plugin);
         return plugin;
     }
 
-    async #addTwo(id: number, bundle: Bundle, at: number, options: AddOptions): Promise<WclapPlugin> {
+    async #addTwo(id: number, bundle: Bundle, options: AddOptions): Promise<WclapPlugin> {
         const worker = this.#startWorker(id);
         let started: Started;
         try {
@@ -284,7 +391,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
         }
         try {
             await this.#audio.request(
-                { type: "add-two", id, index: at, audio: started.audio, ports: started.ports },
+                { type: "add-two", id, prepare: true, audio: started.audio, ports: started.ports },
                 (m) => m.type === "added" && m.id === id,
             );
         } catch (error) {
@@ -296,25 +403,6 @@ export class WclapHost extends TypedTarget<HostEvents> {
         }
         const info: Info = { descriptor: started.descriptor, params: started.params, ports: started.ports };
         return new WclapPlugin(this, id, info, bundle, worker, "two");
-    }
-
-    async remove(plugin: WclapPlugin): Promise<void> {
-        const i = this.plugins.indexOf(plugin);
-        if (i < 0) return;
-        this.plugins.splice(i, 1);
-        plugins.delete(plugin.id);
-        hideInterface(plugin);
-        const main = this.#workers.get(plugin.id);
-        if (main) {
-            await main.link.request(
-                { type: "remove", id: plugin.id, audioDone: this.context.state === "closed" },
-                (m) => m.type === "removed" && m.id === plugin.id,
-            );
-            this.#stopWorker(plugin.id);
-        }
-        // A plug-in on the audio thread joins its own threads as it deactivates there; they end by themselves.
-        this.#audio.post({ type: "remove", id: plugin.id });
-        this.latencyChanged();
     }
 
     // To your arrangement's Topology.message: routing, levels, whatever it defines.

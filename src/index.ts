@@ -12,6 +12,7 @@ export {
     type ChainOptions,
     createChain,
     createHost,
+    type Edit,
     type HostOptions,
     WclapChain,
     WclapHost,

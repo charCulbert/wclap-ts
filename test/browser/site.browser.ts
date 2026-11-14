@@ -511,3 +511,80 @@ test("an interface whose URI has a query string loads in its frame", { timeout: 
     assert.deepEqual(errors, []);
     await page.context().close();
 });
+
+test("rapid edits while playing: no stalls, no errors, and every Worker and plug-in let go", {
+    timeout: 120000,
+}, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        // Workers alive: each two-thread plug-in's main side runs on one.
+        let workers = 0;
+        const Base = window.Worker;
+        window.Worker = class extends Base {
+            constructor(...args: ConstructorParameters<typeof Worker>) {
+                super(...args);
+                workers++;
+            }
+            override terminate(): void {
+                workers--;
+                super.terminate();
+            }
+        };
+        const context = new AudioContext();
+        let stalls = 0;
+        let worstGapMs = 0;
+        const chain = await wclap.createChain(context, {
+            onStats: (s) => {
+                stalls = Math.max(stalls, s.stalls);
+                worstGapMs = Math.max(worstGapMs, s.worstGapMs);
+            },
+        });
+        chain.connect(context.destination);
+        const synth = await chain.add("/fixtures/PICOH-101.wclap.tar.gz");
+        chain.noteOn(60, 0.5);
+        // Past the audio thread's first blocks, which can be slow to start; a stats report comes each second.
+        await sleep(1300);
+        const baseline = workers;
+        const stallsBefore = stalls;
+        const [gain, drum] = await Promise.all(
+            ["HeadlessGain", "Tapa"].map((n) => fetch(`/fixtures/${n}.wclap.tar.gz`).then((b) => b.arrayBuffer())),
+        );
+        for (let i = 0; i < 12; i++) {
+            const fade = i % 2 === 0;
+            let added: Awaited<ReturnType<typeof chain.add>>[] = [];
+            await chain.edit(
+                async (e) => {
+                    added = [
+                        await e.add(new Uint8Array(gain as ArrayBuffer)),
+                        await e.add(new Uint8Array(drum as ArrayBuffer), { index: 0 }),
+                    ];
+                    e.move(synth, 1);
+                },
+                { fade },
+            );
+            await sleep(30);
+            await chain.edit(
+                (e) => {
+                    for (const p of added) e.remove(p);
+                },
+                { fade },
+            );
+        }
+        // A failed edit applies nothing and lets its new plug-in go.
+        const failed = await chain
+            .edit(async (e) => {
+                await e.add(new Uint8Array(gain as ArrayBuffer));
+                throw new Error("changed my mind");
+            })
+            .catch((error: Error) => error.message);
+        await sleep(1500); // a stats report
+        return { stalls: stalls - stallsBefore, worstGapMs, plugins: chain.plugins.length, workers, baseline, failed };
+    });
+    assert.equal(r.failed, "changed my mind");
+    assert.equal(r.plugins, 1);
+    assert.equal(r.workers, r.baseline, "every Worker started for an edit was stopped");
+    assert.equal(r.stalls, 0, `the audio thread stalled during the edits (worst gap ${r.worstGapMs} ms)`);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
