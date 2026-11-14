@@ -9,7 +9,7 @@
 import { EventQueue, Scheduler } from "../events/event-queue.ts";
 import type { TransportAnchor } from "../page/transport.ts";
 import { Plugin } from "../plugin/plugin-one-thread.ts";
-import type { Event, ParamInfo, Ports, Transport } from "../plugin/plugin-types.ts";
+import type { Event, Log, ParamInfo, Ports, Transport } from "../plugin/plugin-types.ts";
 import type { Descriptor } from "../plugin/wasm-instance.ts";
 import type { Bundle } from "../plugin/wclap-bundle.ts";
 import { type FromMain, type MainCall, mainCall } from "../threads/main-thread-calls.ts";
@@ -154,7 +154,7 @@ class HostProcessor extends Base {
                     this.#addOne(m);
                     return;
                 case "add-two": {
-                    const log = (text: string) => this.#send({ type: "log", id: m.id, text });
+                    const log: Log = (text, severity) => this.#send({ type: "log", id: m.id, text, severity });
                     const processor = new AudioSide(m.audio, log, (start) =>
                         this.#send({ type: "spawn", id: m.id, start }),
                     );
@@ -229,13 +229,14 @@ class HostProcessor extends Base {
                 ...(m.offline ? { offline: true } : {}),
             },
             {
-                log: (text) => this.#send({ type: "log", id, text }),
+                log: (text, severity) => this.#send({ type: "log", id, text, severity }),
                 onInterfaceMessage: (bytes) => this.#send({ type: "interface-message", id, bytes }, [bytes.buffer]),
                 onInterfaceRequest: (request, width, height) => {
                     this.#send({ type: "interface-request", id, request, ...(width ? { width, height } : {}) });
                     return true;
                 },
                 onChange: (what) => this.#send({ type: "changed", id, what }),
+                onSuggestPage: (pageId) => this.#send({ type: "suggest-page", id, pageId }),
             },
             // No spawn here: an AudioWorklet can't block, so the plug-in's pthread_join (or any contended lock) would
             // trap. Its pthread_create fails instead. Threads need the plug-in's main role on a Worker.

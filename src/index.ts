@@ -19,6 +19,7 @@ export { WclapPlugin } from "./page/wclap-plugin.ts";
 export type {
     Change,
     InterfaceInfo,
+    LogSeverity,
     NoteName,
     ParamInfo,
     PortInfo,
@@ -26,6 +27,7 @@ export type {
     Preset,
     RemoteControlsPage,
     StateContext,
+    VoiceInfo,
 } from "./plugin/plugin-types.ts";
 export type { Descriptor } from "./plugin/wasm-instance.ts";
 export type { Stats } from "./worklet/worklet-host.ts";

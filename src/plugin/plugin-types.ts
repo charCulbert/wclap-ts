@@ -113,16 +113,23 @@ export interface Transport {
     frame?: number;
 }
 
+// CLAP's log severities; a plug-in's console output is "info" (stdout) or "error" (stderr).
+export type LogSeverity = "debug" | "info" | "warning" | "error" | "fatal" | "host-misbehaving" | "plugin-misbehaving";
+export type Log = (message: string, severity: LogSeverity) => void;
+
 export interface MainOptions {
-    log?: (text: string) => void;
+    log?: Log;
     // Called for each request the plug-in makes from the main side (requests from the audio side reach the
     // audio side's own behaviour).
     onRequest?: (request: Request) => void;
     // The plug-in's interface sent its page a message, or asked to resize, show or hide its window.
     onInterfaceMessage?: (bytes: Uint8Array) => void;
     onInterfaceRequest?: (request: GuiRequest, width?: number, height?: number) => boolean;
-    // Something the page shows changed: the latency (also after a restart), the parameter list, or note names.
+    // Something the page shows changed: the latency (also after a restart), the parameter list, note names,
+    // remote-control pages or voice info.
     onChange?: (what: Change) => void;
+    // The plug-in suggests the page show this remote-controls page (by its page ID).
+    onSuggestPage?: (pageId: number) => void;
     // Where threads the plug-in started leave their requests; idle collects them.
     control?: Control;
     // The host renders offline (an OfflineAudioContext): a plug-in with the render extension is told so before it's
@@ -133,7 +140,7 @@ export interface MainOptions {
 // What a saved state is for, for plug-ins with the state-context extension.
 export type StateContext = "preset" | "duplicate" | "project";
 
-export type Change = "latency" | "params" | "note-names" | "ports" | "state";
+export type Change = "latency" | "params" | "note-names" | "ports" | "state" | "remote-controls" | "voice-info";
 
 // A preset as the plug-in describes it; `kind` and `location` say where it lives (inside the plug-in, or a file).
 export interface Preset {
@@ -151,6 +158,14 @@ export interface RemoteControlsPage {
     // Parameter ids, CLAP_INVALID_ID for an empty slot.
     params: number[];
     forPreset: boolean;
+}
+
+// How many voices the plug-in plays now, and at most; `overlapping`: it tells overlapping notes on one key and
+// channel apart by note ID (CLAP_VOICE_INFO_SUPPORTS_OVERLAPPING_NOTES).
+export interface VoiceInfo {
+    count: number;
+    capacity: number;
+    overlapping: boolean;
 }
 
 // A drum machine's "Kick" on key 36; -1 means any port, key or channel.

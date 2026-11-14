@@ -17,6 +17,7 @@ import {
     CLAP_EXT_STATE_CONTEXT,
     CLAP_EXT_TAIL,
     CLAP_EXT_TIMER_SUPPORT,
+    CLAP_EXT_VOICE_INFO,
     CLAP_EXT_WEBVIEW,
     CLAP_INVALID_ID,
     CLAP_NOTE_DIALECT_CLAP,
@@ -30,6 +31,7 @@ import {
     CLAP_STATE_CONTEXT_FOR_DUPLICATE,
     CLAP_STATE_CONTEXT_FOR_PRESET,
     CLAP_STATE_CONTEXT_FOR_PROJECT,
+    CLAP_VOICE_INFO_SUPPORTS_OVERLAPPING_NOTES,
     clap_audio_buffer,
     clap_audio_port_info,
     clap_event_transport,
@@ -52,6 +54,7 @@ import {
     clap_plugin_state_context,
     clap_plugin_tail,
     clap_plugin_timer_support,
+    clap_plugin_voice_info,
     clap_plugin_webview,
     clap_preset_discovery_factory,
     clap_preset_discovery_indexer,
@@ -61,6 +64,7 @@ import {
     clap_preset_discovery_provider_descriptor,
     clap_process,
     clap_remote_controls_page,
+    clap_voice_info,
     clap_window,
 } from "./clap.generated.ts";
 import {
@@ -85,6 +89,7 @@ import type {
     Preset,
     RemoteControlsPage,
     StateContext,
+    VoiceInfo,
 } from "./plugin-types.ts";
 import { encodeUtf8 } from "./utf8.ts";
 import type { Instance } from "./wasm-instance.ts";
@@ -114,6 +119,9 @@ export class PluginMain {
     // The plug-in's timers by ID: its period and when it's next due, in Date.now() milliseconds.
     readonly #timers = new Map<number, { period: number; due: number }>();
     #nextTimer = 0;
+    // The page the plug-in last suggested, until idle passes it on.
+    #suggestedPage: number | undefined;
+    #voiceInfo: VoiceInfo | null = null;
 
     static create(instance: Instance, id: string, options: MainOptions = {}): PluginMain {
         return new PluginMain(instance, id, options);
@@ -122,7 +130,7 @@ export class PluginMain {
     private constructor(instance: Instance, id: string, options: MainOptions) {
         this.instance = instance;
         this.#options = options;
-        const log = options.log ?? console.log;
+        const log = options.log ?? ((message) => console.log(message));
         const extensions = new Map<string, number>();
         const behaviour: Behaviour = {
             events: this.events,
@@ -132,7 +140,7 @@ export class PluginMain {
                 this.requests.add(request);
                 options.onRequest?.(request);
             },
-            log: (severity, message) => log(`[${severity}] ${message}`),
+            log,
             isAudioThread: () => this.thread.audio,
             isMainThread: () => !this.thread.audio,
             webviewSend: (bytes) => {
@@ -147,6 +155,9 @@ export class PluginMain {
                 return id;
             },
             unregisterTimer: (id) => this.#timers.delete(id),
+            suggestPage: (pageId) => {
+                this.#suggestedPage = pageId;
+            },
         };
         this.#slots = installHost(instance.wasm, behaviour);
         this.#host = writeHost(instance, this.#slots);
@@ -248,6 +259,26 @@ export class PluginMain {
             });
         }
         return names;
+    }
+
+    // The voice info as last read: once active, and again each time the plug-in says it changed. Null without the
+    // extension, or before the first activation.
+    voiceInfo(): VoiceInfo | null {
+        return this.#voiceInfo;
+    }
+
+    // voice_info.get is [main-thread & active].
+    #readVoiceInfo(): void {
+        const ext = this.extension(CLAP_EXT_VOICE_INFO, clap_plugin_voice_info);
+        if (!ext) return;
+        const info = this.instance.allocStruct(clap_voice_info);
+        this.#voiceInfo = ext.call("get", this.plugin.at, info.at)
+            ? {
+                  count: info.get("voice_count"),
+                  capacity: info.get("voice_capacity"),
+                  overlapping: (info.get("flags") & BigInt(CLAP_VOICE_INFO_SUPPORTS_OVERLAPPING_NOTES)) !== 0n,
+              }
+            : null;
     }
 
     latency(): number {
@@ -475,10 +506,11 @@ export class PluginMain {
         if (this.#options.offline) {
             const render = this.extension(CLAP_EXT_RENDER, clap_plugin_render);
             if (render && !render.call("set", this.plugin.at, CLAP_RENDER_OFFLINE))
-                this.#options.log?.("the plug-in can't render offline: it renders as in realtime");
+                this.#options.log?.("the plug-in can't render offline: it renders as in realtime", "warning");
         }
         if (!this.plugin.call("activate", this.plugin.at, sampleRate, 1, maxFrames)) throw new Error("activate failed");
         this.#active = true;
+        this.#readVoiceInfo();
         return setup;
     }
 
@@ -570,6 +602,17 @@ export class PluginMain {
         if (this.requests.delete("params-rescan")) this.#options.onChange?.("params");
         if (this.requests.delete("note-names")) this.#options.onChange?.("note-names");
         if (this.requests.delete("state-dirty")) this.#options.onChange?.("state");
+        if (this.requests.delete("remote-controls")) this.#options.onChange?.("remote-controls");
+        if (this.#suggestedPage !== undefined) {
+            const page = this.#suggestedPage;
+            this.#suggestedPage = undefined;
+            this.#options.onSuggestPage?.(page);
+        }
+        // Inactive, it's read on the next activation.
+        if (this.requests.delete("voice-info")) {
+            if (this.#active) this.#readVoiceInfo();
+            this.#options.onChange?.("voice-info");
+        }
         this.#runTimers();
     }
 
@@ -665,6 +708,7 @@ export class PluginMain {
             this.#options.onChange?.("ports");
         this.#active = this.plugin.call("activate", this.plugin.at, sampleRate, 1, maxFrames);
         if (!this.#active) throw new Error("activate failed after a restart");
+        this.#readVoiceInfo();
         this.requests.add("latency");
     }
 

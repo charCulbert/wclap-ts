@@ -5,7 +5,7 @@
 import { installHost, OutputList } from "../plugin/clap-host-callbacks.ts";
 import { PluginAudio } from "../plugin/plugin-audio-thread.ts";
 import { PluginMain } from "../plugin/plugin-main-thread.ts";
-import type { AudioSetup, Event, MainOptions, ParamInfo, Ports, Transport } from "../plugin/plugin-types.ts";
+import type { AudioSetup, Event, Log, MainOptions, ParamInfo, Ports, Transport } from "../plugin/plugin-types.ts";
 import { type Descriptor, Instance, type ThreadSetup } from "../plugin/wasm-instance.ts";
 import type { Bundle } from "../plugin/wclap-bundle.ts";
 import type { Processor } from "../worklet/plugin-runner.ts";
@@ -171,7 +171,7 @@ export class AudioSide implements Processor {
     readonly output = new OutputList();
 
     // Throws if the second instance can't be attached; the caller falls back to one instance.
-    constructor(start: AudioStart, log: (text: string) => void, spawn?: Spawn) {
+    constructor(start: AudioStart, log: Log, spawn?: Spawn) {
         const base = () => ({
             module: start.module,
             memory: start.memory,
@@ -190,7 +190,7 @@ export class AudioSide implements Processor {
             output: this.output,
             extensions: new Map(start.setup.extensions),
             request: (r) => this.control.request(r),
-            log: (severity, message) => log(`[${severity}] ${message}`),
+            log,
             isAudioThread: () => true,
             isMainThread: () => false,
             webviewSend: () => false,

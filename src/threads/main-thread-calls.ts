@@ -2,7 +2,7 @@
 // threads) and the AudioWorklet between blocks (one thread).
 
 import type { PluginMain } from "../plugin/plugin-main-thread.ts";
-import type { Change, Preset, StateContext } from "../plugin/plugin-types.ts";
+import type { Change, LogSeverity, Preset, StateContext } from "../plugin/plugin-types.ts";
 import type { ThreadStart } from "./plugin-spawned-threads.ts";
 
 // Each call, by name, and what it returns: the page's results are typed from the plug-in's own methods.
@@ -21,6 +21,7 @@ const handlers = {
     params: (p: PluginMain) => p.params(),
     "remote-controls": (p: PluginMain) => p.remoteControls(),
     "note-names": (p: PluginMain) => p.noteNames(),
+    "voice-info": (p: PluginMain) => p.voiceInfo(),
     "param-values": (p: PluginMain) => p.paramValues(),
     "get-resource": (p: PluginMain, c: { path: string }) => p.getResource(c.path),
     "resize-interface": (p: PluginMain, c: { width: number; height: number }) => p.resizeInterface(c.width, c.height),
@@ -38,7 +39,8 @@ export function mainCall(plugin: PluginMain, c: MainCall): unknown {
 
 // What a plug-in's main side tells the page, from whichever thread it runs on.
 export type FromMain =
-    | { type: "log"; id: number; text: string }
+    | { type: "log"; id: number; text: string; severity: LogSeverity }
+    | { type: "suggest-page"; id: number; pageId: number }
     | { type: "interface-message"; id: number; bytes: Uint8Array }
     | { type: "changed"; id: number; what: Change }
     // The plug-in started a thread: the page runs it in a Worker of its own (thread.js).

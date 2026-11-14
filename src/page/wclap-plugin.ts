@@ -9,6 +9,7 @@ import type {
     Preset,
     RemoteControlsPage,
     StateContext,
+    VoiceInfo,
 } from "../plugin/plugin-types.ts";
 import type { Descriptor } from "../plugin/wasm-instance.ts";
 import type { Bundle } from "../plugin/wclap-bundle.ts";
@@ -21,7 +22,9 @@ import type { WclapHost } from "./wclap-host.ts";
 
 // Events: "param" (CustomEvent<{ id, value }>) when the plug-in moves a parameter itself; "gesture"
 // (CustomEvent<{ id, begin }>) when its interface starts or ends a drag, one undo step; "change"
-// (CustomEvent<{ what }>) when its latency, parameter list (now in `params`), note names, ports or state change.
+// (CustomEvent<{ what }>) when its latency, parameter list (now in `params`), note names, ports, state,
+// remote-control pages or voice info change; "suggest-page" (CustomEvent<{ pageId }>) when it suggests a
+// remote-controls page to show.
 export class WclapPlugin extends TypedTarget<PluginEvents> {
     readonly host: WclapHost;
     readonly id: number;
@@ -110,7 +113,9 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
 
     /** @internal */
     receive(m: FromMain): void {
-        if (m.type === "log") this.host.options.onLog?.(m.text, this);
+        if (m.type === "log") this.host.options.onLog?.(m.text, m.severity, this);
+        else if (m.type === "suggest-page")
+            this.dispatchEvent(new CustomEvent("suggest-page", { detail: { pageId: m.pageId } }));
         else if (m.type === "interface-message") this.toInterface?.(m.bytes);
         else if (m.type === "interface-request") this.onInterfaceRequest?.(m.request, m.width, m.height);
         else if (m.type === "spawn") this.host.startThread(this.id, m.start);
@@ -185,6 +190,10 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
 
     remoteControls(): Promise<RemoteControlsPage[]> {
         return this.call({ call: "remote-controls" });
+    }
+    // Null without the voice-info extension.
+    voiceInfo(): Promise<VoiceInfo | null> {
+        return this.call({ call: "voice-info" });
     }
     noteNames(): Promise<NoteName[]> {
         return this.call({ call: "note-names" });

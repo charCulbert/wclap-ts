@@ -4,7 +4,7 @@
 import { EventQueue, MAX_MIDI_BYTES, type Timed } from "../events/event-queue.ts";
 import { Clock } from "../events/live-event-clock.ts";
 import { midiLength } from "../plugin/clap-host-callbacks.ts";
-import type { StateContext } from "../plugin/plugin-types.ts";
+import type { LogSeverity, StateContext } from "../plugin/plugin-types.ts";
 import { canAttach } from "../plugin/wasm-instance.ts";
 import { type Bundle, openBundle } from "../plugin/wclap-bundle.ts";
 import type { FromThread } from "../runtime/thread.ts";
@@ -42,7 +42,7 @@ export interface ChainOptions {
     // shared memories outright, so a plug-in declaring a 4 GB maximum still loads. A plug-in with its own memory keeps
     // its own limit. One that starts with more than this is refused.
     maxMemoryMB?: number;
-    onLog?: (text: string, plugin?: WclapPlugin) => void;
+    onLog?: (message: string, severity: LogSeverity, plugin?: WclapPlugin) => void;
     onError?: (message: string, plugin?: WclapPlugin) => void;
     onStats?: (stats: Stats) => void;
 }
@@ -150,7 +150,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
         this.node.onprocessorerror = () =>
             (options.onError ?? console.error)("the audio thread stopped: its processor threw");
         this.#audio.onOther = (m) => {
-            if (m.type === "log") options.onLog?.(m.text);
+            if (m.type === "log") options.onLog?.(m.text, m.severity);
             else if (m.type === "message") this.dispatchEvent(new CustomEvent("message", { detail: m.data }));
             else if (m.type === "spawn") this.startThread(m.id, m.start);
             else if (m.type === "stats") options.onStats?.({ ...m.stats, dropped: m.stats.dropped + this.#dropped });
@@ -181,7 +181,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
         const link = new Link(worker);
         link.onOther = (m) => {
             if (m.type === "spawn") this.startThread(m.id, m.start);
-            else if (m.type === "log") this.options.onLog?.(m.text);
+            else if (m.type === "log") this.options.onLog?.(m.text, m.severity);
             else if (m.type === "error") (this.options.onError ?? console.error)(m.message, plugins.get(m.id ?? -1));
         };
         this.#workers.set(id, { worker, link });
@@ -204,7 +204,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
         this.#threads.set(id, list.add(thread));
         thread.onmessage = ({ data }: MessageEvent<FromThread>) => {
             if (data.type === "spawn") this.startThread(id, data.start);
-            else if (data.type === "log") this.options.onLog?.(data.text, plugins.get(id));
+            else if (data.type === "log") this.options.onLog?.(data.text, data.severity, plugins.get(id));
             else {
                 if (data.error) (this.options.onError ?? console.error)(data.error, plugins.get(id));
                 thread.terminate();
@@ -250,7 +250,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
             );
             if (!added.info) throw new Error("the plug-in started without describing itself");
             plugin = new WclapPlugin(this, id, added.info, bundle, this.#audio, "one", why);
-            this.options.onLog?.(`${added.info.descriptor.name} runs on the audio thread: ${why}`, plugin);
+            this.options.onLog?.(`${added.info.descriptor.name} runs on the audio thread: ${why}`, "info", plugin);
         }
         this.plugins.splice(at, 0, plugin);
         plugins.set(id, plugin);
@@ -397,7 +397,10 @@ export class WclapHost extends TypedTarget<HostEvents> {
         const length = status === 0xf0 ? bytes.length : midiLength(status);
         if (status < 0x80 || bytes.length < length) return false;
         if (length > MAX_MIDI_BYTES) {
-            this.options.onLog?.(`a ${length}-byte sysex is longer than the ${MAX_MIDI_BYTES} bytes carried: dropped`);
+            this.options.onLog?.(
+                `a ${length}-byte sysex is longer than the ${MAX_MIDI_BYTES} bytes carried: dropped`,
+                "warning",
+            );
             return false;
         }
         const data = Uint8Array.from({ length }, (_, i) => bytes[i] ?? 0);

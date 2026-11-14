@@ -131,21 +131,24 @@ reverb.connect(context.destination);
 | Note expressions | `expression(kind, key, value, when?)`: tuning, pressure, and the rest of CLAP's list                                                                                                  |
 | State            | `saveState(context?)`, `loadState(bytes, context?)`, `presets()`, `loadPreset(preset)`; context `"preset"`, `"duplicate"` or `"project"`, for plug-ins that save differently for each |
 | Interface        | `showInterface(element)`, `hideInterface()`                                                                                                                                           |
-| Information      | `latency()`, `tail()`, `valueText(id, value)`, `remoteControls()`, `noteNames()`                                                                                                      |
+| Information      | `latency()`, `tail()`, `valueText(id, value)`, `remoteControls()`, `noteNames()`, `voiceInfo()`                                                                                       |
 | MIDI             | `midi(bytes, when?)`; `connectMidi({ sysex? })` on a plug-in from `loadWclap`; on a chain, `midi`, `connectMidi`, `connectMidiOut(output)` and `mapCC(cc, plugin, paramId)`           |
 
 Calls that ask the plug-in something return promises, since the plug-in may be running on another thread.
+`voiceInfo()` resolves to `{ count, capacity, overlapping }` as last read (on activation, and again on each
+`"voice-info"` change), or `null` for a plug-in without CLAP's voice-info.
 
 Both plug-ins and chains are `EventTarget`s:
 
-| Event           | On      | `detail`                                                                                                                                                                           |
-| --------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `param`         | plug-in | `{ id, value }`: the plug-in moved a parameter itself (its interface, or automation inside it)                                                                                     |
-| `gesture`       | plug-in | `{ id, begin }`: its interface started or finished a drag, one undo step                                                                                                           |
-| `change`        | plug-in | `{ what }`: `"latency"`, `"params"` (reloaded into `params`), `"note-names"`, `"state"` (unsaved changes), or `"ports"` (the plug-in changed its ports; load it again to use them) |
-| `noteout`       | chain   | `{ on, key, velocity, channel, time }`: a note leaving the last plug-in                                                                                                            |
-| `midiout`       | chain   | `{ data, time }`: a MIDI message leaving the last plug-in, its bytes; notes too, as note-on and note-off messages                                                                  |
-| `latencychange` | chain   | none: a plug-in reported a new latency, or one was added, removed or bypassed                                                                                                      |
+| Event           | On      | `detail`                                                                                                                                                                                                                |
+| --------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `param`         | plug-in | `{ id, value }`: the plug-in moved a parameter itself (its interface, or automation inside it)                                                                                                                          |
+| `gesture`       | plug-in | `{ id, begin }`: its interface started or finished a drag, one undo step                                                                                                                                                |
+| `change`        | plug-in | `{ what }`: `"latency"`, `"params"` (reloaded into `params`), `"note-names"`, `"state"` (unsaved changes), `"remote-controls"`, `"voice-info"`, or `"ports"` (the plug-in changed its ports; load it again to use them) |
+| `suggest-page`  | plug-in | `{ pageId }`: the plug-in suggests showing this remote-controls page                                                                                                                                                    |
+| `noteout`       | chain   | `{ on, key, velocity, channel, time }`: a note leaving the last plug-in                                                                                                                                                 |
+| `midiout`       | chain   | `{ data, time }`: a MIDI message leaving the last plug-in, its bytes; notes too, as note-on and note-off messages                                                                                                       |
+| `latencychange` | chain   | none: a plug-in reported a new latency, or one was added, removed or bypassed                                                                                                                                           |
 
 ```ts
 synth.addEventListener("param", (e) => console.log(e.detail.id, e.detail.value));
@@ -204,6 +207,10 @@ prompt). A CC mapped with `mapCC` moves its parameter and isn't sent on to the p
   through a `GainNode` at 0.
 - A plug-in that crashes stays in `chain.plugins` with `failed` set, silent, and adds no latency; remove it to tidy
   up.
+- `onLog(message, severity, plugin?)` (a chain option) hears what plug-ins log, with CLAP's severity apart from the
+  text: `"debug"`, `"info"`, `"warning"`, `"error"`, `"fatal"`, `"host-misbehaving"` or `"plugin-misbehaving"`. A
+  plug-in's console output arrives as `"info"` (stdout) or `"error"` (stderr); the chain's own messages as `"info"` or
+  `"warning"`.
 - `onStats` (a chain option) reports, about once a second when anything changed: events that arrived too late for
   their frame, events dropped, audio stalls over 20 ms, the longest gap between blocks and the longest block.
 - `chain.remove(plugin)` waits for the plug-in to stop on the audio thread before destroying it, up to 2 s if the

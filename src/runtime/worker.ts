@@ -31,13 +31,14 @@ scope.onmessage = async ({ data }) => {
             const { main, started } = MainThread.start(
                 data.options,
                 {
-                    log: (text) => send({ type: "log", id, text }),
+                    log: (text, severity) => send({ type: "log", id, text, severity }),
                     onInterfaceMessage: (bytes) => send({ type: "interface-message", id, bytes }, [bytes.buffer]),
                     onInterfaceRequest: (request, width, height) => {
                         send({ type: "interface-request", id, request, ...(width ? { width, height } : {}) });
                         return true;
                     },
                     onChange: (what) => send({ type: "changed", id, what }),
+                    onSuggestPage: (pageId) => send({ type: "suggest-page", id, pageId }),
                 },
                 spawn,
             );

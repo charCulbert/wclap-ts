@@ -168,9 +168,9 @@
         "notesOut": 0
     },
     "voice-info": {
-        "sha256": "f7a73a388c3a79b7fd708c6d3f4e371af12eaf39d22ee0bbede4686fb052c0d3",
+        "sha256": "c98822aa8b0d87b1157be3b69bfccbda5a0b7c086fa94d680209f2c3eaed8e30",
         "peak": 4,
-        "rms": 2.8284,
+        "rms": 2.9155,
         "notesOut": 0
     }
 }

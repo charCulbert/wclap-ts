@@ -3,7 +3,7 @@ import type { clap_plugin } from "./clap.generated.ts";
 import type { OutputList, Request } from "./clap-host-callbacks.ts";
 import { PluginAudio } from "./plugin-audio-thread.ts";
 import { PluginMain } from "./plugin-main-thread.ts";
-import type { Event, ParamInfo, Ports, StateContext, Transport } from "./plugin-types.ts";
+import type { Event, Log, ParamInfo, Ports, StateContext, Transport } from "./plugin-types.ts";
 import type { Instance } from "./wasm-instance.ts";
 import type { Layout, Struct } from "./wasm-struct.ts";
 
@@ -12,7 +12,7 @@ export class Plugin {
     readonly main: PluginMain;
     #audio: PluginAudio | undefined;
 
-    static create(instance: Instance, id: string, log?: (text: string) => void): Plugin {
+    static create(instance: Instance, id: string, log?: Log): Plugin {
         return new Plugin(PluginMain.create(instance, id, log ? { log } : {}));
     }
 

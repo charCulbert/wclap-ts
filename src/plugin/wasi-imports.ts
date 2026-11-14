@@ -2,6 +2,7 @@
 // files, the plug-in also reads them, read-only, under /plugin (preopened at fd 3). Every other call answers that it
 // isn't supported.
 
+import type { Log } from "./plugin-types.ts";
 import { decodeUtf8, encodeUtf8 } from "./utf8.ts";
 import type { Wasm } from "./wasm-struct.ts";
 
@@ -84,7 +85,7 @@ const filetype = (node: Node) => (node.data ? FILETYPE_FILE : FILETYPE_DIR);
 export function wasiImports(
     module: WebAssembly.Module,
     wasm: () => Wasm,
-    log: (text: string) => void,
+    log: Log,
     files?: Map<string, Uint8Array>,
     // wasi-threads' thread-spawn: a new thread's ID, or a negative number when there won't be one.
     spawn?: (startArg: number) => number,
@@ -159,7 +160,7 @@ export function wasiImports(
             }
             const lines = (pending[fd] ?? "").split("\n");
             pending[fd] = lines.pop() ?? "";
-            for (const line of lines) log(line);
+            for (const line of lines) log(line, fd === 2 ? "error" : "info");
             u32(written, total);
             return SUCCESS;
         },

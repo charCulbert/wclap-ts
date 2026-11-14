@@ -2,6 +2,7 @@
 // on a fresh instance over the plug-in's shared memory, entered through the module's own wasi_thread_start, which
 // sets up the stack and thread-local storage libc gave it.
 import { installHost, OutputList } from "../plugin/clap-host-callbacks.ts";
+import type { Log } from "../plugin/plugin-types.ts";
 import { Instance } from "../plugin/wasm-instance.ts";
 import { Control } from "./control-block.ts";
 
@@ -55,7 +56,7 @@ export function spawner(base: () => Omit<ThreadStart, "tid" | "startArg">, spawn
 }
 
 // Runs a spawned thread to its end on this thread. Threads it starts in turn go to `spawn` too.
-export function runThread(start: ThreadStart, log: (text: string) => void, spawn: Spawn): void {
+export function runThread(start: ThreadStart, log: Log, spawn: Spawn): void {
     const control = new Control(start.control);
     const { tid: _, startArg: __, ...base } = start;
     const instance = Instance.thread(start.module, start.memory, {
@@ -68,7 +69,7 @@ export function runThread(start: ThreadStart, log: (text: string) => void, spawn
         output: new OutputList(0),
         extensions: new Map(start.extensions),
         request: (r) => control.request(r),
-        log: (severity, message) => log(`[${severity}] ${message}`),
+        log,
         isAudioThread: () => false,
         isMainThread: () => false,
         webviewSend: () => false,

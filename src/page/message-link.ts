@@ -40,7 +40,8 @@ export class Link {
             m.type === "log" ||
             m.type === "interface-message" ||
             m.type === "interface-request" ||
-            m.type === "changed"
+            m.type === "changed" ||
+            m.type === "suggest-page"
         ) {
             const plugin = plugins.get(m.id);
             if (plugin) plugin.receive(m);

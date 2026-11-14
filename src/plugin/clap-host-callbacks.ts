@@ -20,10 +20,12 @@ import {
     CLAP_EXT_NOTE_NAME,
     CLAP_EXT_NOTE_PORTS,
     CLAP_EXT_PARAMS,
+    CLAP_EXT_REMOTE_CONTROLS,
     CLAP_EXT_STATE,
     CLAP_EXT_TAIL,
     CLAP_EXT_THREAD_CHECK,
     CLAP_EXT_TIMER_SUPPORT,
+    CLAP_EXT_VOICE_INFO,
     CLAP_EXT_WEBVIEW,
     CLAP_NOTE_DIALECT_CLAP,
     CLAP_NOTE_DIALECT_MIDI,
@@ -43,15 +45,17 @@ import {
     clap_host_note_name,
     clap_host_note_ports,
     clap_host_params,
+    clap_host_remote_controls,
     clap_host_state,
     clap_host_tail,
     clap_host_thread_check,
     clap_host_timer_support,
+    clap_host_voice_info,
     clap_host_webview,
     clap_input_events,
     clap_output_events,
 } from "./clap.generated.ts";
-import type { Event } from "./plugin-types.ts";
+import type { Event, LogSeverity } from "./plugin-types.ts";
 import type { Instance } from "./wasm-instance.ts";
 import { asPtr, type Layout, type Ptr, type Wasm, type Word } from "./wasm-struct.ts";
 
@@ -63,7 +67,9 @@ export type Request =
     | "params-rescan"
     | "state-dirty"
     | "latency"
-    | "note-names";
+    | "note-names"
+    | "remote-controls"
+    | "voice-info";
 export type GuiRequest = "resize" | "show" | "hide" | "closed" | "hints";
 
 export const MAX_EVENTS = 256;
@@ -191,7 +197,7 @@ export interface Behaviour {
     output: OutputList;
     extensions: Map<string, number>;
     request(request: Request): void;
-    log(severity: number, message: string): void;
+    log(message: string, severity: LogSeverity): void;
     isAudioThread(): boolean;
     isMainThread(): boolean;
     // The plug-in's interface sent a message to its page, or asked for something of its window.
@@ -200,7 +206,20 @@ export interface Behaviour {
     // Timers, on the main side only: a new timer's ID, or -1 to refuse; whether there was such a timer.
     registerTimer?(periodMs: number): number;
     unregisterTimer?(id: number): boolean;
+    // remote_controls.suggest_page, on the main side only.
+    suggestPage?(pageId: number): void;
 }
+
+// By CLAP_LOG_DEBUG to CLAP_LOG_PLUGIN_MISBEHAVING: 0 to 6.
+const SEVERITIES: LogSeverity[] = [
+    "debug",
+    "info",
+    "warning",
+    "error",
+    "fatal",
+    "host-misbehaving",
+    "plugin-misbehaving",
+];
 
 // Kept in step with package.json.
 export const HOST_VERSION = "0.1.0";
@@ -232,6 +251,9 @@ const SLOTS = [
     [clap_host_tail, "changed"],
     [clap_host_timer_support, "register_timer"],
     [clap_host_timer_support, "unregister_timer"],
+    [clap_host_remote_controls, "changed"],
+    [clap_host_remote_controls, "suggest_page"],
+    [clap_host_voice_info, "changed"],
     [clap_input_events, "size"],
     [clap_input_events, "get"],
     [clap_output_events, "try_push"],
@@ -312,7 +334,7 @@ export function installHost(wasm: Wasm, b: Behaviour): number[] {
         "clap_host.request_process": () => b.request("process"),
         "clap_host.request_callback": () => b.request("callback"),
         "clap_host_log.log": (_host: number, severity: number, message: Ptr<"char">) =>
-            b.log(severity, wasm.string(message)),
+            b.log(wasm.string(message), SEVERITIES[severity] ?? "info"),
         "clap_host_thread_check.is_main_thread": () => b.isMainThread(),
         "clap_host_thread_check.is_audio_thread": () => b.isAudioThread(),
         "clap_host_params.rescan": () => b.request("params-rescan"),
@@ -330,6 +352,9 @@ export function installHost(wasm: Wasm, b: Behaviour): number[] {
         "clap_host_note_name.changed": () => b.request("note-names"),
         // The audio side reads the tail on every block the plug-in returns TAIL from.
         "clap_host_tail.changed": () => undefined,
+        "clap_host_remote_controls.changed": () => b.request("remote-controls"),
+        "clap_host_remote_controls.suggest_page": (_host: number, pageId: number) => b.suggestPage?.(pageId),
+        "clap_host_voice_info.changed": () => b.request("voice-info"),
         "clap_host_timer_support.register_timer": (_host: number, periodMs: number, id: Ptr<"u32">) => {
             const timer = b.registerTimer?.(periodMs) ?? -1;
             if (timer < 0) return false;
@@ -404,6 +429,8 @@ export function writeHost(instance: Instance, slots: number[]): HostStructs {
         [CLAP_EXT_NOTE_NAME, fill(clap_host_note_name).at],
         [CLAP_EXT_TAIL, fill(clap_host_tail).at],
         [CLAP_EXT_TIMER_SUPPORT, fill(clap_host_timer_support).at],
+        [CLAP_EXT_REMOTE_CONTROLS, fill(clap_host_remote_controls).at],
+        [CLAP_EXT_VOICE_INFO, fill(clap_host_voice_info).at],
     ]);
     return {
         host: host.at,

@@ -7,6 +7,8 @@ export interface PluginEvents {
     value: CustomEvent<{ id: number; value: number }>;
     gesture: CustomEvent<{ id: number; begin: boolean }>;
     change: CustomEvent<{ what: Change }>;
+    // The plug-in suggests showing this remote-controls page (RemoteControlsPage.id).
+    "suggest-page": CustomEvent<{ pageId: number }>;
 }
 export interface HostEvents {
     noteout: CustomEvent<NoteOut>;

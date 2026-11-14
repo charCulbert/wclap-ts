@@ -527,15 +527,18 @@ test("remote-controls: two pages; a control sets the parameter its page names, a
     plugin.destroy();
 });
 
-test("remote-controls: a layout change reaches the page through remote_controls.changed and suggest_page", {
-    todo: "wclap-ts offers no clap.remote-controls host extension, so the plug-in can't say its pages changed or suggest one (plan: Small gaps, as fixtures need them)",
-}, async () => {
+test("remote-controls: a layout change reaches the page through remote_controls.changed and suggest_page", async () => {
     const changes: Change[] = [];
-    const plugin = await load("remote-controls", { onChange: (what) => changes.push(what) });
+    const suggested: number[] = [];
+    const plugin = await load("remote-controls", {
+        onChange: (what) => changes.push(what),
+        onSuggestPage: (pageId) => suggested.push(pageId),
+    });
     assert.ok(plugin.main.hostExtensions().some(([name]) => name === CLAP_EXT_REMOTE_CONTROLS));
     plugin.process(16, [programChange(0, 1)]);
     plugin.idle();
-    assert.equal(changes.length, 1);
+    assert.deepEqual(changes, ["remote-controls"]);
+    assert.deepEqual(suggested, [1], "page Main");
     plugin.destroy();
 });
 
@@ -593,20 +596,29 @@ test("param-indication: mapping a parameter to a control and automating it are i
 
 // voice-info: left the voice count, right how many times the host has read the voice info.
 
-test("voice-info: read once active, and again when the plug-in says it changed", {
-    todo: "wclap-ts doesn't read voice_info or offer clap.voice-info to the plug-in (plan: Small gaps, as fixtures need them)",
-}, async () => {
-    const plugin = await load("voice-info");
+test("voice-info: read once active, and again when the plug-in says it changed", async () => {
+    const changes: Change[] = [];
+    const plugin = await load("voice-info", { onChange: (what) => changes.push(what) });
+    assert.deepEqual(plugin.main.voiceInfo(), { count: 4, capacity: 8, overlapping: false });
     const reads = held(plugin.process(16))[0]?.[1] ?? 0;
     assert.ok(reads >= 1, "read after activating");
     plugin.process(16, [programChange(8, 0)]);
     plugin.idle();
+    assert.deepEqual(changes, ["voice-info"]);
+    assert.deepEqual(plugin.main.voiceInfo(), { count: 1, capacity: 8, overlapping: false });
     assert.equal(held(plugin.process(16))[0]?.[1], reads + 1, "read again after voice_info.changed");
+    plugin.destroy();
+});
+
+test("voice-info: null for a plug-in without it", async () => {
+    const plugin = await load("log");
+    assert.equal(plugin.main.voiceInfo(), null);
     plugin.destroy();
 });
 
 // log: left how many messages it has sent, right the severity of the last.
 
+const SEVERITIES = ["debug", "info", "warning", "error", "fatal", "host-misbehaving", "plugin-misbehaving"];
 const LOG = [
     "log test 1/7: debug, audio thread",
     "log test 2/7: info, main thread, UTF-8 é✓",
@@ -618,26 +630,24 @@ const LOG = [
 ];
 
 test("log: every severity from the audio and main threads, UTF-8 intact, and the plug-in keeps running", async () => {
-    const logged: string[] = [];
-    const plugin = await load("log", { log: (text) => logged.push(text) });
+    const logged: string[][] = [];
+    const plugin = await load("log", { log: (text, severity) => logged.push([text, severity]) });
     assert.deepEqual(held(plugin.process(16)), [[1, 0]]);
-    assert.deepEqual(logged, [`[0] ${LOG[0]}`]);
+    assert.deepEqual(logged, [[LOG[0], "debug"]]);
     plugin.idle();
     assert.deepEqual(
         logged,
-        LOG.map((text, severity) => `[${severity}] ${text}`),
+        LOG.map((text, i) => [text, SEVERITIES[i]]),
     );
     assert.deepEqual(held(plugin.process(16)), [[7, 6]], "still processing after FATAL and both MISBEHAVING");
     plugin.destroy();
 });
 
-test("log: each message reaches the page with its severity apart from its text", {
-    todo: "onLog gets one string with the severity written into it (plan: Small gaps, as fixtures need them)",
-}, async () => {
+test("log: each message reaches the page with its severity apart from its text", async () => {
     const logged: unknown[][] = [];
     const plugin = await load("log", { log: (...args: unknown[]) => void logged.push(args) });
     plugin.process(16);
-    assert.deepEqual(logged[0], [LOG[0], 0]);
+    assert.deepEqual(logged[0], [LOG[0], "debug"]);
     plugin.destroy();
 });
 

@@ -6,10 +6,13 @@ import {
     clap_plugin_entry,
     clap_plugin_factory,
 } from "./clap.generated.ts";
+import type { Log } from "./plugin-types.ts";
 import { encodeUtf8 } from "./utf8.ts";
 import { wasiImports } from "./wasi-imports.ts";
 import { asPtr, type Layout, type Ptr, type Struct, Wasm } from "./wasm-struct.ts";
 import type { Bundle } from "./wclap-bundle.ts";
+
+const consoleLog: Log = (message) => console.log(message);
 
 export interface Descriptor {
     id: string;
@@ -34,7 +37,7 @@ interface Exports {
 }
 
 interface Options {
-    log?: (text: string) => void;
+    log?: Log;
     // The memory to import, made by the caller (so threads can be given it before this returns); else from the bundle.
     memory?: WebAssembly.Memory;
     // What the plug-in's thread-spawn calls; without it, the plug-in can't start threads.
@@ -68,7 +71,7 @@ export function canAttach(bundle: Bundle): boolean {
 function instantiate(
     module: WebAssembly.Module,
     memory: WebAssembly.Memory | null,
-    log: (text: string) => void,
+    log: Log,
     files?: Map<string, Uint8Array>,
     spawn?: (startArg: number) => number,
 ) {
@@ -100,7 +103,7 @@ export class Instance {
     readonly factory: Struct<typeof clap_plugin_factory> | null;
 
     static create(bundle: Bundle, options: Options = {}): Instance {
-        const log = options.log ?? console.log;
+        const log = options.log ?? consoleLog;
         const { exports, wasm } = instantiate(
             bundle.module,
             options.memory ?? (bundle.memory && new WebAssembly.Memory(bundle.memory)),
@@ -137,7 +140,7 @@ export class Instance {
         thread: ThreadSetup,
         options: AttachOptions = {},
     ) {
-        const log = options.log ?? console.log;
+        const log = options.log ?? consoleLog;
         const { exports, wasm } = instantiate(module, memory, log, options.files, options.spawn);
         const { __stack_pointer, __wasm_init_tls, __wasi_init_tp } = exports;
         if (!__stack_pointer || !__wasm_init_tls || !__wasi_init_tp)
@@ -158,7 +161,7 @@ export class Instance {
 
     // An instance for a thread the plug-in started: wasi_thread_start, called by startThread, sets up the rest.
     static thread(module: WebAssembly.Module, memory: WebAssembly.Memory, options: AttachOptions = {}): Instance {
-        const { exports, wasm } = instantiate(module, memory, options.log ?? console.log, options.files, options.spawn);
+        const { exports, wasm } = instantiate(module, memory, options.log ?? consoleLog, options.files, options.spawn);
         if (!exports.wasi_thread_start) throw new Error("the plug-in has no wasi_thread_start");
         return new Instance(exports, wasm, null);
     }

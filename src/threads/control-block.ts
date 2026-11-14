@@ -22,6 +22,8 @@ const BITS: Record<Request, number> = {
     "state-dirty": 32,
     latency: 64,
     "note-names": 128,
+    "remote-controls": 256,
+    "voice-info": 512,
 };
 
 export class Control {
