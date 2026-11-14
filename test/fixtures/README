@@ -22,7 +22,7 @@ Spawner.wasm
 
 Not in the repo: `npm run fixtures` fetches these into .cache/, pinned by release or commit and sha256, and prints
 each one's licence and source (test/fetch-fixture.ts lists them). A test fetches any it needs that's missing.
-    - Thirteen test plug-ins from github.com/charCulbert/wclap-test-plugins v0.3.1 (MIT), each proving one thing a
+    - Thirteen test plug-ins from github.com/charCulbert/wclap-test-plugins v0.3.2 (MIT), each proving one thing a
       host must do: audio-ports-activation, gui-lifecycle, log, midi-echo, note-ids, note-name, param-indication,
       probe, process-lifecycle, remote-controls, render, state-context and voice-info.
     - Twelve bundles built by github.com/andremichelle/open-webclap, each under its plug-in's own licence: Hive

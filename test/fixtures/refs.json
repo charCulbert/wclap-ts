@@ -132,9 +132,9 @@
         "notesOut": 0
     },
     "midi-echo": {
-        "sha256": "df84110c097f95d756d82964a1e05689823f23d5cf34fa14ee2a740f73c02ac3",
-        "peak": 10,
-        "rms": 0.0765,
+        "sha256": "e52a72fd7b7e336d7f2d7f8860e8b32e44cb08cfac02853bc4fef5ab62f3714c",
+        "peak": 11,
+        "rms": 0.0842,
         "notesOut": 4
     },
     "note-name": {

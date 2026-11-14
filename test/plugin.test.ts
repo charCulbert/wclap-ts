@@ -385,14 +385,14 @@ test("events a plug-in sends out: CLAP and MIDI notes, other MIDI, its own param
     main.destroy();
 });
 
-test("an interface with several files: opened in order, files served, messages both ways only while it shows", async () => {
+test("an interface with several files: opened in order, files served, messages both ways only while it's open", async () => {
     const instance = Instance.create(await openBundle(await bytes("gui-lifecycle")));
     const replies: number[][] = [];
     const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", {
         log: () => undefined,
         onInterfaceMessage: (b) => replies.push([...b]),
     });
-    assert.equal(main.sendToInterface(new Uint8Array([1])), false, "refused before it shows");
+    assert.equal(main.sendToInterface(new Uint8Array([1])), false, "refused before it's created");
     const info = main.openInterface();
     assert.deepEqual(info, { uri: "/ui/index.html", width: 400, height: 260, resizable: false });
     const text = (path: string) => {
@@ -407,7 +407,7 @@ test("an interface with several files: opened in order, files served, messages b
     assert.equal(main.sendToInterface(new Uint8Array([1])), true);
     assert.deepEqual(replies, [[1, 1]]);
     main.closeInterface();
-    assert.equal(main.sendToInterface(new Uint8Array([1])), false, "refused once hidden");
+    assert.equal(main.sendToInterface(new Uint8Array([1])), false, "refused once closed");
     assert.deepEqual(replies, [[1, 1]]);
     main.destroy();
 });

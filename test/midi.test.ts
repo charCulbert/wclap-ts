@@ -1,6 +1,7 @@
 // Raw MIDI: through the event queue, into a plug-in in the dialect it asks for, out of it, down a chain, and from Web
 // MIDI. midi-echo (a test plug-in, fetched) sends every note and MIDI event straight back out and marks each input
-// event's frame with its type (left) and flags (right).
+// event's frame with its type + 1 (left) and flags (right). Its three plug-ins each take one dialect: MIDI, MIDI 2 or
+// CLAP.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { EventQueue, MAX_MIDI_BYTES, Scheduler, type Timed } from "../src/events/event-queue.ts";
@@ -12,6 +13,9 @@ import {
     CLAP_EVENT_MIDI,
     CLAP_EVENT_MIDI_SYSEX,
     CLAP_EVENT_MIDI2,
+    CLAP_EVENT_NOTE_CHOKE,
+    CLAP_EVENT_NOTE_OFF,
+    CLAP_EVENT_NOTE_ON,
     CLAP_NOTE_DIALECT_CLAP,
     CLAP_NOTE_DIALECT_MIDI,
     CLAP_NOTE_DIALECT_MIDI2,
@@ -43,6 +47,8 @@ const echo = async (id = MIDI_ECHO) => {
 };
 // Each nonzero frame of a channel as [frame, value].
 const marks = (samples: Float32Array | undefined) => [...(samples ?? [])].flatMap((v, i) => (v !== 0 ? [[i, v]] : []));
+// What midi-echo writes on the left for an event of this type: the type + 1, so a CLAP note-on (type 0) shows.
+const mark = (type: number) => type + 1;
 const out = (plugin: Plugin) =>
     plugin.output.events
         .slice(0, plugin.output.count)
@@ -93,7 +99,7 @@ test("the page's side of the queue (drain) gets each message's own bytes", () =>
     ]);
 });
 
-test("midi-echo (MIDI dialect): notes arrive as MIDI, pitch bend, aftertouch and sysex as they are, and all come back", async () => {
+test("midi-echo (MIDI only): notes arrive as MIDI, pitch bend, aftertouch and sysex as they are, and all come back", async () => {
     const plugin = await echo();
     const events: Event[] = [
         { at: 1, type: "note-on", key: 60, velocity: 1, channel: 2, noteId: 5, live: true },
@@ -105,12 +111,12 @@ test("midi-echo (MIDI dialect): notes arrive as MIDI, pitch bend, aftertouch and
     ];
     const audio = plugin.process(16, events);
     assert.deepEqual(marks(audio[0]?.[0]), [
-        [1, CLAP_EVENT_MIDI],
-        [2, CLAP_EVENT_MIDI],
-        [3, CLAP_EVENT_MIDI],
-        [4, CLAP_EVENT_MIDI_SYSEX],
-        [5, CLAP_EVENT_MIDI],
-        [6, CLAP_EVENT_MIDI],
+        [1, mark(CLAP_EVENT_MIDI)],
+        [2, mark(CLAP_EVENT_MIDI)],
+        [3, mark(CLAP_EVENT_MIDI)],
+        [4, mark(CLAP_EVENT_MIDI_SYSEX)],
+        [5, mark(CLAP_EVENT_MIDI)],
+        [6, mark(CLAP_EVENT_MIDI)],
     ]);
     assert.deepEqual(marks(audio[0]?.[1]), [[1, CLAP_EVENT_IS_LIVE]], "only the live note is marked live");
     assert.deepEqual(out(plugin), [
@@ -124,15 +130,43 @@ test("midi-echo (MIDI dialect): notes arrive as MIDI, pitch bend, aftertouch and
     plugin.destroy();
 });
 
-test("midi-echo: a choke or a note-off for any key, which MIDI can't say, goes as a CLAP note", async () => {
+test("midi-echo (MIDI only): a choke, or a note-off for any key, which MIDI can't say, goes as a note-off or All Notes Off", async () => {
     const plugin = await echo();
     const audio = plugin.process(16, [
         { at: 1, type: "note-choke", key: 60, velocity: 0, channel: 0 },
         { at: 2, type: "note-off", key: -1, velocity: 0, channel: -1 },
     ]);
     assert.deepEqual(marks(audio[0]?.[0]), [
-        [1, 2], // CLAP_EVENT_NOTE_CHOKE
-        [2, 1], // CLAP_EVENT_NOTE_OFF
+        [1, mark(CLAP_EVENT_MIDI)],
+        [2, mark(CLAP_EVENT_MIDI)],
+    ]);
+    assert.deepEqual(out(plugin), [
+        [1, "note-off", 60], // read back from MIDI as a note
+        ...Array.from({ length: 16 }, (_, c) => [2, 0xb0 | c, 123, 0]),
+    ]);
+    plugin.destroy();
+});
+
+test("midi-echo.clap (CLAP only): notes, chokes and note-offs for any key arrive as CLAP notes and come back", async () => {
+    const plugin = await echo(`${MIDI_ECHO}.clap`);
+    const audio = plugin.process(16, [
+        { at: 1, type: "note-on", key: 60, velocity: 1, channel: 2, noteId: 5, live: true },
+        { at: 2, type: "note-off", key: 60, velocity: 0, channel: 2, noteId: 5 },
+        { at: 3, type: "note-choke", key: 62, velocity: 0, channel: 0 },
+        { at: 4, type: "note-off", key: -1, velocity: 0, channel: -1 },
+    ]);
+    assert.deepEqual(marks(audio[0]?.[0]), [
+        [1, mark(CLAP_EVENT_NOTE_ON)],
+        [2, mark(CLAP_EVENT_NOTE_OFF)],
+        [3, mark(CLAP_EVENT_NOTE_CHOKE)],
+        [4, mark(CLAP_EVENT_NOTE_OFF)],
+    ]);
+    assert.deepEqual(marks(audio[0]?.[1]), [[1, CLAP_EVENT_IS_LIVE]]);
+    assert.deepEqual(out(plugin), [
+        [1, "note-on", 60],
+        [2, "note-off", 60],
+        [3, "note-choke", 62],
+        [4, "note-off", -1],
     ]);
     plugin.destroy();
 });
@@ -146,10 +180,10 @@ test("midi-echo.midi2 (MIDI 2 only): notes and channel messages arrive as MIDI 2
         { at: 4, type: "note-off", key: 60, velocity: 0, channel: 1 },
     ]);
     assert.deepEqual(marks(audio[0]?.[0]), [
-        [1, CLAP_EVENT_MIDI2],
-        [2, CLAP_EVENT_MIDI2],
-        [3, CLAP_EVENT_MIDI_SYSEX],
-        [4, CLAP_EVENT_MIDI2],
+        [1, mark(CLAP_EVENT_MIDI2)],
+        [2, mark(CLAP_EVENT_MIDI2)],
+        [3, mark(CLAP_EVENT_MIDI_SYSEX)],
+        [4, mark(CLAP_EVENT_MIDI2)],
     ]);
     assert.deepEqual(out(plugin), [
         [1, "note-on", 60],
@@ -160,7 +194,7 @@ test("midi-echo.midi2 (MIDI 2 only): notes and channel messages arrive as MIDI 2
     plugin.destroy();
 });
 
-test("the dialect comes from the plug-in's note input: probe prefers CLAP, midi-echo MIDI, midi-echo.midi2 MIDI 2", async () => {
+test("the dialect comes from the plug-in's note input: probe prefers CLAP, and each midi-echo takes only its own", async () => {
     const fixture = TEST_PLUGINS.find((f) => f.name === "probe");
     assert.ok(fixture);
     const instance = Instance.create(await openBundle(await fetchFixture(fixture)), { log: () => undefined });
@@ -168,11 +202,13 @@ test("the dialect comes from the plug-in's note input: probe prefers CLAP, midi-
     probe.activate(48000, 128);
     const midiEcho = await echo();
     const midi2Echo = await echo(`${MIDI_ECHO}.midi2`);
+    const clapEcho = await echo(`${MIDI_ECHO}.clap`);
+    const plugins = [probe, midiEcho, midi2Echo, clapEcho];
     assert.deepEqual(
-        [probe, midiEcho, midi2Echo].map((p) => p.audio?.setup.dialect),
-        [CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2],
+        plugins.map((p) => p.audio?.setup.dialect),
+        [CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2, CLAP_NOTE_DIALECT_CLAP],
     );
-    for (const p of [probe, midiEcho, midi2Echo]) p.destroy();
+    for (const p of plugins) p.destroy();
 });
 
 test("a chain passes a plug-in's MIDI output to the next plug-in and out of the chain", async () => {
@@ -196,9 +232,9 @@ test("a chain passes a plug-in's MIDI output to the next plug-in and out of the 
     chain.render(0, 128, [], audio);
     // The chain's output is the second plug-in's: it received every message the first sent on.
     assert.deepEqual(marks(audio[0]?.[0]), [
-        [3, CLAP_EVENT_MIDI],
-        [4, CLAP_EVENT_MIDI_SYSEX],
-        [5, CLAP_EVENT_MIDI],
+        [3, mark(CLAP_EVENT_MIDI)],
+        [4, mark(CLAP_EVENT_MIDI_SYSEX)],
+        [5, mark(CLAP_EVENT_MIDI)],
     ]);
     assert.deepEqual(left, [
         [3, 0xe0, 1, 2],

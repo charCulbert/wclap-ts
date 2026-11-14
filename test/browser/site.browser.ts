@@ -410,7 +410,7 @@ test("raw MIDI from the page: untimed calls are live, timed ones aren't, and not
     const { page, errors } = await harness();
     const r = await page.evaluate(async () => {
         const { wclap } = window as unknown as Harness;
-        // midi-echo marks each event it receives: its CLAP event type on the left, its flags on the right.
+        // midi-echo marks each event it receives: its CLAP event type + 1 on the left, its flags on the right.
         const context = new OfflineAudioContext({ numberOfChannels: 2, length: 1024, sampleRate: 48000 });
         const plugin = await wclap.loadWclap(context, "/cache/midi-echo.wclap.tar.gz", { lead: 100 / 48000 });
         plugin.connect(context.destination);
@@ -429,10 +429,10 @@ test("raw MIDI from the page: untimed calls are live, timed ones aren't, and not
     });
     assert.deepEqual(r.sent, [true, true, true, true, false]);
     assert.deepEqual(r.types, [
-        [100, 10], // CLAP_EVENT_MIDI
-        [300, 10], // a note, as MIDI
-        [400, 11], // CLAP_EVENT_MIDI_SYSEX
-        [500, 10],
+        [100, 11], // CLAP_EVENT_MIDI
+        [300, 11], // a note, as MIDI
+        [400, 12], // CLAP_EVENT_MIDI_SYSEX
+        [500, 11],
     ]);
     assert.deepEqual(r.flags, [[100, 1]], "only the untimed message is CLAP_EVENT_IS_LIVE");
     assert.deepEqual(errors, []);

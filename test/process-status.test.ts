@@ -89,6 +89,7 @@ const lifecycle = async () => {
     return plugin;
 };
 
+// process-lifecycle's output 1 is how far steady_time moved since its previous call, / 65536.
 test("request_process wakes a sleeping plug-in for one block; skipped blocks move steady_time on", async () => {
     const plugin = await lifecycle();
     const block = () => {
@@ -99,8 +100,23 @@ test("request_process wakes a sleeping plug-in for one block; skipped blocks mov
     assert.deepEqual(block(), [true, 0, 0], "asleep: the callback hasn't run");
     assert.deepEqual(block(), [true, 0, 0]);
     plugin.idle(); // on_main_thread: request_process
+    // 384 frames since its last call, not 128: the two skipped blocks count.
     assert.deepEqual(block(), [false, Math.fround(0.2), 384 / 65536], "woken; steady_time counts skipped blocks");
     assert.deepEqual(block(), [true, 0, 0], "and asleep again");
+    plugin.destroy();
+});
+
+test("a reset reaches the plug-in, which starts its steady_time comparison over; it still grows by each block", async () => {
+    const plugin = await lifecycle();
+    const steady = (key?: number) =>
+        plugin.process(128, key ? [{ at: 0, type: "note-on", key, velocity: 1 }] : [])[1]?.[0]?.[0];
+    steady();
+    steady(); // asleep: skipped
+    assert.equal(steady(63), 256 / 65536, "key 63 wakes it (CONTINUE from now on): 256 frames since its last call");
+    assert.equal(steady(), 128 / 65536);
+    plugin.reset();
+    assert.equal(steady(63), 0, "the first call after the reset");
+    assert.equal(steady(), 128 / 65536);
     plugin.destroy();
 });
 

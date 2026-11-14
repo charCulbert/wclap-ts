@@ -6,6 +6,8 @@ import { EventQueue, Scheduler, type Timed } from "../src/events/event-queue.ts"
 import {
     CLAP_EXT_REMOTE_CONTROLS,
     CLAP_INVALID_ID,
+    CLAP_NOTE_DIALECT_CLAP,
+    CLAP_NOTE_DIALECT_MIDI,
     CLAP_NOTE_EXPRESSION_TUNING,
 } from "../src/plugin/clap.generated.ts";
 import { OutputList } from "../src/plugin/clap-host-callbacks.ts";
@@ -57,9 +59,8 @@ test("probe: notes, Level, global and per-voice modulation and tuning, each on i
     const queue = EventQueue.create();
     const chain = new Chain(new Scheduler(queue), 48000);
     chain.add({ id: 1, processor: plugin, ports: plugin.ports, enabled: true, failed: false });
-    // The README's protocol, from frame 100 so it crosses a block boundary. The page addresses a voice by key and
-    // channel, not note ID: note 7 is key 60, note 8 key 62, both on channel 0. MIDI note 64 on channel 1 arrives as
-    // the CLAP note it becomes.
+    // The README's protocol, its CLAP run (probe prefers CLAP), from frame 100 so it crosses a block boundary. The
+    // page addresses each voice by key and channel, as the README does.
     const at = 100;
     const protocol: [number, Timed][] = [
         [4, { type: "note-on", key: 60, velocity: 1, channel: 0 }],
@@ -73,6 +74,8 @@ test("probe: notes, Level, global and per-voice modulation and tuning, each on i
         [36, { type: "note-off", key: 62, velocity: 0, channel: 0 }],
         [40, { type: "note-on", key: 64, velocity: 100 / 127, channel: 1 }],
         [44, { type: "note-off", key: 64, velocity: 0, channel: 1 }],
+        [46, { type: "note-on", key: 67, velocity: 1, channel: 2 }],
+        [47, { type: "note-off", key: 67, velocity: 0, channel: 2 }],
         [56, { type: "param-mod", id: 1, value: 0 }],
     ];
     for (const [frame, event] of protocol) queue.push(at + frame, event);
@@ -103,6 +106,9 @@ test("probe: notes, Level, global and per-voice modulation and tuning, each on i
             "41:0",
             "44:-1",
             "45:0",
+            "46:1",
+            "47:-1",
+            "48:0",
         ]),
     );
     assert.deepEqual(
@@ -114,7 +120,7 @@ test("probe: notes, Level, global and per-voice modulation and tuning, each on i
     plugin.destroy();
 });
 
-test("probe: params.flush applies Level and its modulation between blocks; a reset clears the modulation", async () => {
+test("probe: params.flush applies Level and its modulation between blocks; both survive a reset", async () => {
     const plugin = await load("probe");
     plugin.flush(
         [
@@ -126,7 +132,7 @@ test("probe: params.flush applies Level and its modulation between blocks; a res
     assert.equal(new Map(plugin.main.paramValues()).get(1), 0.25);
     assert.deepEqual(runs(plugin.process(16)[0]?.[1] ?? new Float32Array()), ["0:0.75"]);
     plugin.reset();
-    assert.deepEqual(runs(plugin.process(16)[0]?.[1] ?? new Float32Array()), ["0:0.25"], "Level kept");
+    assert.deepEqual(runs(plugin.process(16)[0]?.[1] ?? new Float32Array()), ["0:0.75"], "Level and modulation kept");
     plugin.destroy();
 });
 
@@ -201,6 +207,7 @@ test("note-ids: the README's protocol, note IDs through to NOTE_END", async () =
             note(2, "note-on", 0, 0, 60),
             note(4, "note-on", 100, 0, 60),
             note(6, "note-on", 200, 1, 62),
+            note(8, "note-on", -1, 0, 64), // no note ID: ended by the full wildcard at 22
             note(10, "note-off", 100, 0, 60),
             note(12, "note-off", 999, 1, 62),
             note(14, "note-off", -1, 0, 62),
@@ -217,15 +224,28 @@ test("note-ids: the README's protocol, note IDs through to NOTE_END", async () =
         "5:0",
         "6:201",
         "7:0",
+        "8:-1",
+        "9:0",
         "18:301",
         "19:0",
     ]);
-    assert.deepEqual(runs(right ?? new Float32Array()), ["0:0", "10:101", "11:0", "16:201", "17:0", "20:302", "21:0"]);
+    assert.deepEqual(runs(right ?? new Float32Array()), [
+        "0:0",
+        "10:101",
+        "11:0",
+        "16:201",
+        "17:0",
+        "20:302",
+        "21:0",
+        "22:-1",
+        "23:0",
+    ]);
     assert.deepEqual(noteEnds(plugin), [
         [100, 0, 0, 60],
         [200, 0, 1, 62],
         [0, 0, 0, 60],
         [300, 0, 0, 60],
+        [-1, 0, 0, 64],
     ]);
     plugin.destroy();
 });
@@ -303,30 +323,42 @@ test("note IDs: a plug-in's notes reach the next plug-in in the chain with the I
     receiver.destroy();
 });
 
-// process-lifecycle: output 0 a marker for each real process call, output 1 steady_time / 65536. Its README's render:
-// 41 blocks of 128 frames, main-thread callbacks between them, a MIDI note-on (here the CLAP note) at each frame.
+// process-lifecycle: output 0 a marker for each real process call, output 1 how far steady_time moved since the
+// previous call, / 65536 (0 on the first). Its README's render: 41 blocks of 128 frames, main-thread callbacks between
+// them, a note-on at each frame below. It prefers MIDI, so wclap-ts sends MIDI note-ons; the README's CLAP run sends
+// the same notes as CLAP note-ons, which must give the same output, and a NOTE_END for each.
 
-const lifecycle = async () => {
+const LIFECYCLE_KEYS = new Map([
+    [1024, 63],
+    [1152, 62],
+    [2048, 60],
+    [3072, 64],
+    [3584, 62],
+    [4096, 61],
+    [4608, 63],
+    [4736, 62],
+    [5120, 65],
+]);
+
+const lifecycle = async (dialect = CLAP_NOTE_DIALECT_MIDI) => {
     const plugin = await load("process-lifecycle");
     assert.deepEqual(plugin.ports.outputs, [1, 1]);
-    const keys = new Map([
-        [1024, 63],
-        [1152, 62],
-        [2048, 60],
-        [3072, 64],
-        [3584, 62],
-        [4096, 61],
-        [4608, 63],
-        [4736, 62],
-        [5120, 65],
-    ]);
-    const blocks = new Map<number, { marker: Float32Array; steady: Float32Array; tail: number; skipped: boolean }>();
+    const setup = plugin.audio?.setup;
+    assert.ok(setup);
+    assert.equal(setup.dialect, CLAP_NOTE_DIALECT_MIDI, "the dialect it prefers");
+    assert.ok(setup.dialects & dialect);
+    setup.dialect = dialect;
+    const blocks = new Map<
+        number,
+        { marker: Float32Array; steady: Float32Array; tail: number; skipped: boolean; ends: number[][] }
+    >();
     for (let start = 0; start < 5248; start += 128) {
-        const key = keys.get(start);
+        const key = LIFECYCLE_KEYS.get(start);
         const out = plugin.process(128, key ? [{ at: 0, type: "note-on", key, velocity: 1 }] : []);
         const copy = (port: number) => Float32Array.from(out[port]?.[0] ?? []);
         const skipped = plugin.audio?.skipped ?? false;
-        blocks.set(start, { marker: copy(0), steady: copy(1), tail: plugin.main.tail(), skipped });
+        const ends = noteEnds(plugin);
+        blocks.set(start, { marker: copy(0), steady: copy(1), tail: plugin.main.tail(), skipped, ends });
         plugin.idle();
     }
     plugin.destroy();
@@ -339,44 +371,60 @@ const lifecycle = async () => {
 };
 const constant = (samples: Float32Array) => (samples.every((v) => v === samples[0]) ? samples[0] : Number.NaN);
 
-test("process-lifecycle: each woken block's marker and steady time, the tails it reports, and no poison", async () => {
-    const block = await lifecycle();
-    const marker = (start: number) => constant(block(start).marker);
-    assert.equal(marker(0), Math.fround(0.1));
-    assert.equal(marker(128), Math.fround(0.2), "woken once by its request_callback round trip");
-    assert.equal(marker(1024), Math.fround(0.5));
-    assert.equal(constant(block(1024).steady), 1024 / 65536);
-    assert.equal(marker(2048), Math.fround(0.3));
-    assert.equal(block(2048).tail, 256);
-    for (const start of [3072, 3200, 3328, 3456]) assert.equal(marker(start), Math.fround(0.6), "past 256 samples");
-    assert.ok(block(3072).tail >= 0x7fffffff, "an infinite tail");
-    assert.equal(marker(4096), Math.fround(0.4));
-    assert.deepEqual([marker(4224), constant(block(4224).steady)], [0, 0], "the quiet block, quiet on both outputs");
-    assert.equal(marker(4608), Math.fround(0.5));
-    assert.equal(constant(block(4608).steady), 4608 / 65536, "steady time advanced");
-    assert.deepEqual([marker(5120), constant(block(5120).steady)], [0, 0], "the 9.0 error block cleared");
-});
+// Each processed block's markers: [start, output 0, output 1 in frames]. wclap-ts's steady_time keeps counting while
+// it skips a sleeping plug-in, so the advance after a gap is the whole gap: 896 frames at 1024 and 2048, not 128.
+const LIFECYCLE = [
+    [0, 0.1, 0], // the first call
+    [128, 0.2, 128], // woken once by its request_callback round trip
+    [1024, 0.5, 896], // since the 0.2 block, skipped blocks included
+    [1152, 0, 128],
+    [2048, 0.3, 896],
+    [2176, 0.3, 128],
+    [2304, 0.3, 128], // the entry block and the 256-sample tail
+    [3072, 0.6, 768],
+    [3200, 0.6, 128],
+    [3328, 0.6, 128],
+    [3456, 0.6, 128], // past 256 samples
+    [3584, 0, 128], // key 62's own block is processed, and returns SLEEP
+    [4096, 0.4, 512],
+    [4224, 0, 0], // the quiet block, quiet on both outputs
+    [4608, 0.5, 384], // since the quiet block
+    [4736, 0, 128],
+    [5120, 0, 0], // the 9.0 error block cleared
+] as const;
+
+for (const [name, dialect] of [
+    ["MIDI", CLAP_NOTE_DIALECT_MIDI],
+    ["CLAP", CLAP_NOTE_DIALECT_CLAP],
+] as const) {
+    test(`process-lifecycle (${name} notes): each woken block's marker and steady time advance, its tails, and no poison`, async () => {
+        const block = await lifecycle(dialect);
+        for (const [start, marker, advance] of LIFECYCLE) {
+            const b = block(start);
+            assert.equal(b.skipped, false, `${start} processed`);
+            assert.deepEqual(
+                [constant(b.marker), constant(b.steady)],
+                [Math.fround(marker), advance / 65536],
+                `${start}`,
+            );
+        }
+        assert.equal(block(2048).tail, 256);
+        assert.ok(block(3072).tail >= 0x7fffffff, "an infinite tail");
+        assert.equal(block(3584).tail, 0, "back to none");
+        // A CLAP note-on gets a NOTE_END on its own frame, since the plug-in plays no notes; a MIDI one gets none.
+        for (const [start, key] of LIFECYCLE_KEYS)
+            assert.deepEqual(block(start).ends, name === "CLAP" ? [[-1, 0, 0, key]] : [], `${start}`);
+    });
+}
 
 test("process-lifecycle: blocks while it sleeps and after its finite tail are skipped and silent", async () => {
     const block = await lifecycle();
-    // Each run of processed blocks: the start-up block and its request_process wake, then each note's blocks. Key
-    // 62's own block is processed (it returns SLEEP from it); so is key 61's quiet block at 4224.
-    const processed = [
-        [0, 256],
-        [1024, 1280],
-        [2048, 2432], // the entry block and the 256-sample tail
-        [3072, 3712], // the infinite tail, until key 62
-        [4096, 4352],
-        [4608, 4864],
-        [5120, 5248],
-    ];
-    const awake = (start: number) => processed.some(([from = 0, to = 0]) => start >= from && start < to);
+    const awake = new Set<number>(LIFECYCLE.map(([start]) => start));
     for (let start = 0; start < 5248; start += 128) {
         const b = block(start);
-        assert.equal(b.skipped, !awake(start), `${start}`);
+        assert.equal(b.skipped, !awake.has(start), `${start}`);
         if (b.skipped) assert.deepEqual([constant(b.marker), constant(b.steady)], [0, 0], `${start} silent`);
     }
-    assert.equal(constant(block(3584).steady), 3584 / 65536, "key 62's own block is processed");
 });
 
 // gui-lifecycle: its interface's open order, files and messages are in plugin.test.ts ("an interface with several
