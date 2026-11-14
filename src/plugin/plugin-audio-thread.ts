@@ -2,6 +2,7 @@
 // events and transport into the plug-in's memory.
 import {
     CLAP_CORE_EVENT_SPACE_ID,
+    CLAP_EVENT_NOTE_CHOKE,
     CLAP_EVENT_NOTE_EXPRESSION,
     CLAP_EVENT_NOTE_OFF,
     CLAP_EVENT_NOTE_ON,
@@ -222,13 +223,14 @@ export class PluginAudio {
         if (event.type === "param" || event.type === "param-mod") {
             // A modulation has the same layout, with its amount where the value is.
             const e = this.#param.moveTo(asPtr(at));
-            const perNote = event.type === "param-mod" && event.key !== undefined;
+            const noteId = event.type === "param-mod" ? (event.noteId ?? -1) : -1;
+            const perNote = event.type === "param-mod" && (event.key !== undefined || noteId >= 0);
             e.set("param_id", event.id);
             e.set("cookie", NULL);
-            e.set("note_id", -1);
+            e.set("note_id", noteId);
             e.set("port_index", perNote ? 0 : -1);
             e.set("channel", perNote ? (event.channel ?? -1) : -1);
-            e.set("key", perNote ? (event.key ?? -1) : -1);
+            e.set("key", perNote && event.type === "param-mod" ? (event.key ?? -1) : -1);
             e.set("value", event.value);
             const type = event.type === "param" ? CLAP_EVENT_PARAM_VALUE : CLAP_EVENT_PARAM_MOD;
             this.#writeHeader(at, clap_event_param_value.size, event.at, type);
@@ -239,20 +241,25 @@ export class PluginAudio {
         } else if (event.type === "expression") {
             const e = this.#expression.moveTo(asPtr(at));
             e.set("expression_id", event.expression);
-            e.set("note_id", -1);
+            e.set("note_id", event.noteId ?? -1);
             e.set("port_index", 0);
             e.set("channel", event.channel ?? -1);
             e.set("key", event.key);
             e.set("value", event.value);
             this.#writeHeader(at, clap_event_note_expression.size, event.at, CLAP_EVENT_NOTE_EXPRESSION);
-        } else if (event.type === "note-on" || event.type === "note-off") {
+        } else if (event.type === "note-on" || event.type === "note-off" || event.type === "note-choke") {
             const e = this.#note.moveTo(asPtr(at));
-            e.set("note_id", -1);
+            e.set("note_id", event.noteId ?? -1);
             e.set("port_index", 0);
             e.set("channel", event.channel ?? 0);
             e.set("key", event.key);
             e.set("velocity", event.velocity);
-            const type = event.type === "note-on" ? CLAP_EVENT_NOTE_ON : CLAP_EVENT_NOTE_OFF;
+            const type =
+                event.type === "note-on"
+                    ? CLAP_EVENT_NOTE_ON
+                    : event.type === "note-off"
+                      ? CLAP_EVENT_NOTE_OFF
+                      : CLAP_EVENT_NOTE_CHOKE;
             this.#writeHeader(at, clap_event_note.size, event.at, type);
         }
     }

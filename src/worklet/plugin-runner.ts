@@ -1,6 +1,7 @@
 // One plug-in's block, whatever arrangement it's in (a chain, your own graph): bypass and failure, letting go of held
 // notes, parameter changes flushed while bypassed, main-thread time, reset and a one-block fade when it's bypassed or
 // brought back. Allocates nothing per block.
+import { HeldNotes } from "../events/held-notes.ts";
 import { MAX_EVENTS, type OutputList } from "../plugin/clap-host-callbacks.ts";
 import type { Event, Ports, Transport } from "../plugin/plugin-types.ts";
 
@@ -29,7 +30,6 @@ export interface Slot {
 
 // Room kept for note-offs when a block's events reach the limit, so no note is left hanging.
 export const NOTE_OFF_ROOM = 64;
-const NOTES = 16 * 128;
 const FADE_CHANNELS = 8;
 const MAX_FRAMES = 128;
 
@@ -43,7 +43,8 @@ export class Runner {
     processed = false;
     readonly #events: Event[] = [];
     readonly #releases: Event[] = Array.from({ length: MAX_EVENTS }, () => noteOff());
-    readonly #held = new Map<number, Uint8Array>();
+    // The notes each plug-in holds, by the IDs they reached it with, so letting go sends each its own note-off.
+    readonly #held = new Map<number, HeldNotes>();
     readonly #release = new Set<number>();
     readonly #fade = new Map<number, "in" | "out">();
     readonly #fadeBuffers = Array.from({ length: FADE_CHANNELS }, () => new Float32Array(MAX_FRAMES));
@@ -58,7 +59,7 @@ export class Runner {
     }
 
     add(id: number): void {
-        if (!this.#held.has(id)) this.#held.set(id, new Uint8Array(NOTES));
+        if (!this.#held.has(id)) this.#held.set(id, new HeldNotes());
     }
 
     remove(id: number): void {
@@ -112,18 +113,22 @@ export class Runner {
             // Back from bypass: clear what it was holding (delay lines, envelopes) before fading in.
             if (fade === "in") p.reset?.();
             const rendered = p.process(frames, this.#events, inputs, n, this.transport);
-            this.#hold(slot.id, n);
+            const held = this.#held.get(slot.id);
+            this.#hold(held, n);
             p.idle?.();
             if (!rendered) return null;
             this.processed = true;
             const out = p.output;
+            let params = false;
             for (let k = 0; k < out.count; k++) {
-                const t = out.events[k]?.type;
-                if (t === "param" || t === "gesture-begin" || t === "gesture-end") {
-                    this.onParams(slot.id, out);
-                    break;
-                }
+                const e = out.events[k];
+                const t = e?.type;
+                if (t === "param" || t === "gesture-begin" || t === "gesture-end") params = true;
+                // A voice it ended itself needs no note-off when it's let go. Only by ID: a NOTE_END without one
+                // can't say which of the notes on its key ended.
+                else if (e?.type === "note-end" && e.noteId >= 0) held?.off(e.channel, e.key, e.noteId);
             }
+            if (params) this.onParams(slot.id, out);
             if (slot.ports.outputs.length === 0) return null;
             return fade === "in" ? this.#crossfade(inputs, rendered, frames, true) : rendered;
         } catch (error) {
@@ -183,38 +188,48 @@ export class Runner {
         return this.#fadeAudio;
     }
 
-    // Note-offs, at the block's start, for the notes this plug-in holds; the rest wait for the next block.
+    // Note-offs, at the block's start, for the notes this plug-in holds, each with the note ID it came with,
+    // oldest first; the rest wait for the next block. If it held more notes than could be kept, an any-key
+    // note-off last.
     #takeReleases(id: number): number {
         const held = this.#held.get(id);
+        const room = MAX_EVENTS - NOTE_OFF_ROOM;
         let n = 0;
-        if (held)
-            for (let k = 0; k < NOTES && n < MAX_EVENTS - NOTE_OFF_ROOM; k++) {
-                if (!held[k]) continue;
-                held[k] = 0;
-                const e = this.#releases[n] as { key: number; channel: number };
-                e.key = k % 128;
-                e.channel = Math.floor(k / 128);
-                this.#events[n] = this.#releases[n] as Event;
-                n++;
+        if (held) {
+            for (; n < held.count && n < room; n++) this.#releaseAt(n, held.channel(n), held.key(n), held.id(n));
+            held.drop(n);
+            if (held.count === 0 && held.lost && n < room) {
+                this.#releaseAt(n++, -1, -1, -1);
+                held.lost = false;
             }
-        if (n < MAX_EVENTS - NOTE_OFF_ROOM) this.#release.delete(id);
+        }
+        if (!held?.count) this.#release.delete(id);
         return n;
     }
 
-    #hold(id: number, n: number): void {
-        const held = this.#held.get(id);
+    #releaseAt(n: number, channel: number, key: number, noteId: number): void {
+        const e = this.#releases[n] as { key: number; channel: number; noteId: number };
+        e.key = key;
+        e.channel = channel;
+        e.noteId = noteId;
+        this.#events[n] = this.#releases[n] as Event;
+    }
+
+    // What the plug-in holds after this block's notes.
+    #hold(held: HeldNotes | undefined, n: number): void {
         if (!held) return;
         for (let k = 0; k < n; k++) {
             const e = this.#events[k];
-            if (e?.type === "note-on" || e?.type === "note-off")
-                mark(held, e.channel ?? 0, e.key, e.type === "note-on");
+            if (e?.type === "note-on") held.on(e.channel ?? 0, e.key, e.noteId ?? -1);
+            else if (e?.type === "note-off" || e?.type === "note-choke")
+                held.off(e.channel ?? 0, e.key, e.noteId ?? -1);
         }
     }
 }
 
-// Past the block's limit, only note-offs still fit, so nothing is left hanging.
+// Past the block's limit, only note-offs and chokes still fit, so nothing is left hanging.
 export function fits(e: Event, n: number): boolean {
-    return n < MAX_EVENTS - NOTE_OFF_ROOM || (e.type === "note-off" && n < MAX_EVENTS);
+    return n < MAX_EVENTS - NOTE_OFF_ROOM || ((e.type === "note-off" || e.type === "note-choke") && n < MAX_EVENTS);
 }
 
 // Marks a note held or let go; -1 for the channel or key (CLAP's "any") lets go of every match.
@@ -230,5 +245,5 @@ export function mark(notes: Uint8Array, channel: number, key: number, on: boolea
 }
 
 export function noteOff(): Event {
-    return { at: 0, type: "note-off", key: 0, velocity: 0, channel: 0 };
+    return { at: 0, type: "note-off", key: 0, velocity: 0, channel: 0, noteId: -1 };
 }

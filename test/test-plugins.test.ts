@@ -4,11 +4,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { EventQueue, Scheduler, type Timed } from "../src/events/event-queue.ts";
 import { CLAP_NOTE_EXPRESSION_TUNING } from "../src/plugin/clap.generated.ts";
+import { OutputList } from "../src/plugin/clap-host-callbacks.ts";
 import { Plugin } from "../src/plugin/plugin-one-thread.ts";
 import type { Event } from "../src/plugin/plugin-types.ts";
 import { Instance } from "../src/plugin/wasm-instance.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
 import { Chain } from "../src/worklet/chain.ts";
+import type { Processor } from "../src/worklet/plugin-runner.ts";
 import { fetchFixture, TEST_PLUGINS } from "./fetch-fixture.ts";
 
 const load = async (name: string) => {
@@ -29,16 +31,12 @@ const runs = (samples: Float32Array) => {
     return out;
 };
 
-// Note IDs, chokes and NOTE_END aren't in wclap-ts's events yet: these carry them for the tests marked not done.
-const NO_NOTE_IDS = "wclap-ts sends no note IDs or chokes, and drops NOTE_END (plan: Note IDs and choke)";
 const note = (at: number, type: "note-on" | "note-off" | "note-choke", noteId: number, channel: number, key: number) =>
-    ({ at, type, key, velocity: 1, channel, noteId }) as unknown as Event;
+    ({ at, type, key, velocity: 1, channel, noteId }) as Event;
 const noteEnds = (plugin: Plugin) =>
     plugin.output.events
         .slice(0, plugin.output.count)
-        .map((e) => e as unknown as Record<string, number | string>)
-        .filter((e) => e.type === "note-end")
-        .map((e) => [e.noteId, e.port, e.channel, e.key]);
+        .flatMap((e) => (e.type === "note-end" ? [[e.noteId, e.port, e.channel, e.key]] : []));
 
 // probe: every event written into the output on its frame. Left: clicks plus each voice's modulation and tuning / 128;
 // right: Level plus global modulation.
@@ -53,7 +51,7 @@ test("probe: notes, Level, global and per-voice modulation and tuning, each on i
     const queue = EventQueue.create();
     const chain = new Chain(new Scheduler(queue), 48000);
     chain.add({ id: 1, processor: plugin, ports: plugin.ports, enabled: true, failed: false });
-    // The README's protocol, from frame 100 so it crosses a block boundary. wclap-ts addresses a voice by key and
+    // The README's protocol, from frame 100 so it crosses a block boundary. The page addresses a voice by key and
     // channel, not note ID: note 7 is key 60, note 8 key 62, both on channel 0. MIDI note 64 on channel 1 arrives as
     // the CLAP note it becomes.
     const at = 100;
@@ -126,9 +124,7 @@ test("probe: params.flush applies Level and its modulation between blocks; a res
     plugin.destroy();
 });
 
-test("probe: voices addressed by note ID, a choke, and a NOTE_END for each ended voice", {
-    todo: NO_NOTE_IDS,
-}, async () => {
+test("probe: voices addressed by note ID, a choke, and a NOTE_END for each ended voice", async () => {
     const plugin = await load("probe");
     const tuning = (at: number, noteId: number, value: number) =>
         ({
@@ -138,11 +134,11 @@ test("probe: voices addressed by note ID, a choke, and a NOTE_END for each ended
             key: -1,
             noteId,
             value,
-        }) as unknown as Event;
+        }) as Event;
     const out = plugin.process(64, [
         note(4, "note-on", 7, 0, 60),
         note(16, "note-on", 8, 0, 62),
-        { at: 20, type: "param-mod", id: 1, value: 0.5, noteId: 7 } as unknown as Event,
+        { at: 20, type: "param-mod", id: 1, value: 0.5, noteId: 7 },
         tuning(24, 8, 12),
         note(32, "note-off", -1, 0, 60),
         note(36, "note-choke", 8, 0, 62),
@@ -192,7 +188,7 @@ test("note-ids: a note-off ends only the voices on its key and channel", async (
     plugin.destroy();
 });
 
-test("note-ids: the README's protocol, note IDs through to NOTE_END", { todo: NO_NOTE_IDS }, async () => {
+test("note-ids: the README's protocol, note IDs through to NOTE_END", async () => {
     const plugin = await load("note-ids");
     const [left, right] =
         plugin.process(32, [
@@ -226,6 +222,79 @@ test("note-ids: the README's protocol, note IDs through to NOTE_END", { todo: NO
         [300, 0, 0, 60],
     ]);
     plugin.destroy();
+});
+
+// Through a chain, as the page plays: wclap-ts gives each note-on its own ID and sends it again on the note-off.
+const noteIdsChain = async () => {
+    const plugin = await load("note-ids");
+    const queue = EventQueue.create();
+    const chain = new Chain(new Scheduler(queue), 48000);
+    chain.add({ id: 1, processor: plugin, ports: plugin.ports, enabled: true, failed: false });
+    const render = () => {
+        const out = [[new Float32Array(128), new Float32Array(128)]];
+        chain.render(0, 128, [], out);
+        return out[0]?.map(runs);
+    };
+    return { plugin, queue, render };
+};
+
+test("note IDs: overlapping notes on one key end oldest first, and a choke ends what's left of the key", async () => {
+    const { plugin, queue, render } = await noteIdsChain();
+    const on = (frame: number, key: number, channel = 0) =>
+        queue.push(frame, { type: "note-on", key, velocity: 1, channel });
+    const off = (frame: number, key: number, channel = 0) =>
+        queue.push(frame, { type: "note-off", key, velocity: 0, channel });
+    on(2, 60);
+    on(4, 60);
+    on(6, 62, 1);
+    off(10, 60);
+    off(12, 60);
+    on(14, 60);
+    queue.push(16, { type: "note-choke", key: 60, velocity: 0, channel: 0 });
+    off(18, 62, 1);
+    off(20, 60); // nothing left on key 60: no ID to give it
+    const [left, right] = render() ?? [];
+    // IDs from 0, in the order the notes start; each shows as ID + 1.
+    assert.deepEqual(left, ["0:0", "2:1", "3:0", "4:2", "5:0", "6:3", "7:0", "14:4", "15:0"]);
+    assert.deepEqual(right, ["0:0", "10:1", "11:0", "12:2", "13:0", "16:4", "17:0", "18:3", "19:0"]);
+    assert.deepEqual(noteEnds(plugin), [
+        [0, 0, 0, 60],
+        [1, 0, 0, 60],
+        [3, 0, 0, 60],
+        [2, 0, 1, 62],
+    ]);
+    plugin.destroy();
+});
+
+test("note IDs: a plug-in's notes reach the next plug-in in the chain with the IDs it gave them", async () => {
+    const receiver = await load("note-ids");
+    const output = new OutputList();
+    // A stand-in note effect that renumbers each note as 1000 + its key.
+    const sender: Processor = {
+        output,
+        process(_frames, events, inputs, count) {
+            output.count = 0;
+            for (let i = 0; i < count; i++) {
+                const e = events[i];
+                if (e?.type === "note-on" || e?.type === "note-off")
+                    output.push(e.at, e.type, e.key, e.velocity, e.channel ?? 0, 1000 + e.key);
+            }
+            return inputs;
+        },
+    };
+    const queue = EventQueue.create();
+    const chain = new Chain(new Scheduler(queue), 48000);
+    chain.add({ id: 1, processor: sender, ports: { inputs: [], outputs: [] }, enabled: true, failed: false });
+    chain.add({ id: 2, processor: receiver, ports: receiver.ports, enabled: true, failed: false });
+    queue.push(3, { type: "note-on", key: 60, velocity: 1, channel: 0 });
+    queue.push(9, { type: "note-off", key: 60, velocity: 0, channel: 0 });
+    const out = [[new Float32Array(128), new Float32Array(128)]];
+    chain.render(0, 128, [], out);
+    assert.deepEqual(out[0]?.map(runs), [
+        ["0:0", "3:1061", "4:0"],
+        ["0:0", "9:1061", "10:0"],
+    ]);
+    receiver.destroy();
 });
 
 // process-lifecycle: output 0 a marker for each real process call, output 1 steady_time / 65536. Its README's render:

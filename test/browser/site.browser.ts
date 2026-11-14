@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { after, before, test } from "node:test";
 import { type Browser, chromium, type Page } from "playwright";
-import { type Fixture, fetchFixture, OPEN_WEBCLAP_BUNDLES } from "../fetch-fixture.ts";
+import { type Fixture, fetchFixture, OPEN_WEBCLAP_BUNDLES, TEST_PLUGINS } from "../fetch-fixture.ts";
 
 const root = new URL("../../site/", import.meta.url).pathname;
 // Beside the site: /test/ is this folder (harness.html), /fixtures/ the repo's test plug-ins, /cache/<name> a fetched
@@ -19,7 +19,7 @@ const folders: Record<string, string> = {
     "/test/": new URL(".", import.meta.url).pathname,
     "/fixtures/": new URL("../fixtures/", import.meta.url).pathname,
 };
-const fetched = (name: string) => OPEN_WEBCLAP_BUNDLES.find((f) => f.name === name) as Fixture;
+const fetched = (name: string) => [...OPEN_WEBCLAP_BUNDLES, ...TEST_PLUGINS].find((f) => f.name === name) as Fixture;
 const types: Record<string, string> = {
     ".html": "text/html",
     ".js": "text/javascript",
@@ -330,6 +330,42 @@ test("a full event queue drops a note-on but still delivers the note-off", { tim
     assert.equal(r.noteOn, false);
     assert.equal(r.noteOff, true);
     assert.ok(r.after < 1e-4, `the note hangs: peak ${r.after}`);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test("notes from the page carry note IDs: overlapping notes end oldest first, and choke ends a key", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap } = window as unknown as Harness;
+        // note-ids writes each note's ID + 1 on the frame it starts (left) and on the frame it ends (right).
+        const context = new OfflineAudioContext({ numberOfChannels: 2, length: 1024, sampleRate: 48000 });
+        const plugin = await wclap.loadWclap(context, "/cache/note-ids.wclap.tar.gz");
+        plugin.connect(context.destination);
+        const at = (frame: number) => frame / context.sampleRate;
+        plugin.noteOn(60, 1, at(100));
+        plugin.noteOn(60, 1, at(200));
+        plugin.noteOn(64, 1, at(300));
+        plugin.noteOff(60, 0, at(400));
+        plugin.choke(60, at(500));
+        plugin.choke(64, at(600));
+        const audio = await context.startRendering();
+        await plugin.destroy();
+        const marks = (c: number) => [...audio.getChannelData(c)].flatMap((v, i) => (v !== 0 ? [[i, v]] : []));
+        return { started: marks(0), ended: marks(1) };
+    });
+    assert.deepEqual(r.started, [
+        [100, 1],
+        [200, 2],
+        [300, 3],
+    ]);
+    assert.deepEqual(r.ended, [
+        [400, 1],
+        [500, 2],
+        [600, 3],
+    ]);
     assert.deepEqual(errors, []);
     await page.context().close();
 });

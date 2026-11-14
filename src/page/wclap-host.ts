@@ -337,13 +337,13 @@ export class WclapHost extends TypedTarget<HostEvents> {
     }
 
     // `when`: AudioContext time for an exact frame; without it, now (constant latency). `target`: a plug-in's id,
-    // or -1 for the first plug-in. False if the queue was full and the event dropped; a note-off is never dropped,
-    // only sent a little later.
+    // or -1 for the first plug-in. False if the queue was full and the event dropped; a note-off or choke is never
+    // dropped, only sent a little later.
     schedule(event: Timed, when?: number, target = -1, sourceMs = performance.now()): boolean {
         const frame = when === undefined ? this.clock.frameAt(sourceMs) : Math.round(when * this.context.sampleRate);
         this.#sendRetries();
         if (this.#queue.push(frame, event, target)) return true;
-        if (event.type === "note-off") {
+        if (event.type === "note-off" || event.type === "note-choke") {
             this.#retry.push({ frame, event: { ...event }, target });
             return true;
         }
@@ -357,6 +357,11 @@ export class WclapHost extends TypedTarget<HostEvents> {
 
     noteOff(key: number, velocity = 0, when?: number, channel = 0): boolean {
         return this.schedule({ type: "note-off", key, velocity, channel }, when);
+    }
+
+    // Stops every note held on the key at once, with no release (a closed hi-hat cutting off an open one).
+    choke(key: number, when?: number, channel = 0): boolean {
+        return this.schedule({ type: "note-choke", key, velocity: 0, channel }, when);
     }
 
     // MIDI: every input plays the host; controller knobs move mapped parameters; notes leaving go to an output.

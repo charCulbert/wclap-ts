@@ -87,8 +87,8 @@ await chain.connectMidi(); // every MIDI input plays the chain
 ```
 
 All plug-ins in a chain run in one AudioWorkletNode, in order, within each block. Audio goes from each plug-in to
-the next. Notes a plug-in sends out go to the next plug-in in the same block, and the last plug-in's notes come out
-of the chain (`chain.connectMidiOut(output)`).
+the next. Notes a plug-in sends out go to the next plug-in in the same block, with the note IDs it gave them, and the
+last plug-in's notes come out of the chain (`chain.connectMidiOut(output)`).
 
 A plug-in that crashes (in WebAssembly, a trap) goes silent and is marked `failed`; the rest play on.
 
@@ -120,7 +120,7 @@ reverb.connect(context.destination);
 
 | What             | Calls                                                                                                                                 |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Notes            | `noteOn`, `noteOff`, with an optional AudioContext time and channel                                                                   |
+| Notes            | `noteOn`, `noteOff`, `choke(key, when?, channel?)`, with an optional AudioContext time and channel                                    |
 | Parameters       | `params`, `param(id, value, when?)`, `values`                                                                                         |
 | Modulation       | `modulate(id, amount, when?, note?)`, for every voice or one note                                                                     |
 | Note expressions | `expression(kind, key, value, when?)`: tuning, pressure, and the rest of CLAP's list                                                  |
@@ -155,8 +155,11 @@ notes held by the plug-ins after it, since their note-offs would no longer reach
 - `noteOn`, `param` and the rest take an AudioContext time and land on that frame. Without one, the event plays as
   soon as it safely can: the `lead` option (256 frames by default, about 5 ms at 48 kHz) after the call, so live
   playing keeps its spacing.
-- They return `false` if the event queue is full and the event was dropped. A note-off is never dropped: it waits
-  for room, so a note can't hang.
+- They return `false` if the event queue is full and the event was dropped. A note-off or choke is never dropped: it
+  waits for room, so a note can't hang.
+- Every note-on gets a CLAP note ID of its own, and the note-off that ends it carries the same ID: two `noteOn(60)`
+  then two `noteOff(60)` end the first note, then the second. `choke(key)` stops every note held on the key at once,
+  with no release. The IDs stay inside wclap-ts; you play by key and channel.
 - Host-synced plug-ins (arpeggiators, synced delays) follow a transport: `chain.transport.tempo`, `.playing`,
   `.setTimeSignature(n, d)`, `.seek(beats)`, and `.beats` for the position now. Each host has its own unless you
   share one, which keeps them in step to the frame:

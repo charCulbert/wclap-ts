@@ -244,6 +244,51 @@ test("bypassing, moving or removing a plug-in lets go of the notes it and those 
     assert.deepEqual(a.seen.at(-1), ["note-off 64"], "removed before it: it lets go");
 });
 
+test("a plug-in let go of on bypass gets a note-off for each note ID it holds, except those it ended", () => {
+    const queue = EventQueue.create();
+    const chain = new Chain(new Scheduler(queue), 48000);
+    // Records each note with its ID, passes the notes on with theirs, and ends voice 1 itself (a NOTE_END).
+    const seen = new Map<number, string[][]>();
+    const stand = (id: number, ends: number[] = []): Processor => {
+        const output = new OutputList();
+        const blocks: string[][] = [];
+        seen.set(id, blocks);
+        return {
+            output,
+            process(_frames, events, inputs, count) {
+                output.count = 0;
+                const block: string[] = [];
+                for (let i = 0; i < count; i++) {
+                    const e = events[i];
+                    if (e?.type !== "note-on" && e?.type !== "note-off") continue;
+                    block.push(`${e.type} ${e.key} #${e.noteId}`);
+                    output.push(e.at, e.type, e.key, e.velocity, e.channel ?? 0, e.noteId);
+                }
+                for (const noteId of ends.splice(0)) output.push(0, "note-end", 60, 0, 0, noteId);
+                blocks.push(block);
+                return inputs;
+            },
+        };
+    };
+    chain.add(slotOf(1, stand(1, [1])));
+    chain.add(slotOf(2, stand(2)));
+    queue.push(0, { type: "note-on", key: 60, velocity: 1 });
+    queue.push(1, { type: "note-on", key: 60, velocity: 1 });
+    queue.push(2, { type: "note-on", key: 62, velocity: 1 });
+    chain.render(0, 128, stereo(), stereo());
+    const ons = ["note-on 60 #0", "note-on 60 #1", "note-on 62 #2"];
+    assert.deepEqual([seen.get(1)?.at(-1), seen.get(2)?.at(-1)], [ons, ons], "passed on with their IDs");
+
+    chain.setEnabled(1, false);
+    chain.render(128, 128, stereo(), stereo());
+    assert.deepEqual(seen.get(1)?.at(-1), ["note-off 60 #0", "note-off 62 #2"], "voice 1 had ended");
+    assert.deepEqual(
+        seen.get(2)?.at(-1),
+        ["note-off 60 #0", "note-off 60 #1", "note-off 62 #2"],
+        "a plug-in's NOTE_END isn't passed on: the next one still holds voice 1",
+    );
+});
+
 test("a bypassed plug-in gets its parameter changes by flush, not lost", () => {
     const queue = EventQueue.create();
     const chain = new Chain(new Scheduler(queue), 48000);

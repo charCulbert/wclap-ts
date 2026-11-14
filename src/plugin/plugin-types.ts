@@ -11,13 +11,34 @@ export interface ParamInfo {
     flags: number;
 }
 
-// `target`: in a chain, the plug-in a scheduled event is for (-1: the start of the chain). A modulation offsets a
-// parameter without moving it, for every voice or (with `key`) one note's; an expression shapes one note
-// (CLAP_NOTE_EXPRESSION_*: volume, pan, tuning, vibrato, expression, brightness, pressure).
+// `target`: in a chain, the plug-in a scheduled event is for (-1: the start of the chain). `noteId`: CLAP's note ID,
+// -1 (or left out) for none; a note-off or choke with none ends every voice on its key and channel. A choke stops
+// voices at once, with no release. A modulation offsets a parameter without moving it, for every voice or (with
+// `key` or `noteId`) one note's; an expression shapes one note (CLAP_NOTE_EXPRESSION_*: volume, pan, tuning,
+// vibrato, expression, brightness, pressure).
 export type Event =
-    | { at: number; type: "note-on" | "note-off"; key: number; velocity: number; channel?: number; target?: number }
+    | {
+          at: number;
+          type: "note-on" | "note-off" | "note-choke";
+          key: number;
+          velocity: number;
+          channel?: number;
+          noteId?: number;
+          target?: number;
+      }
+    // Only from a plug-in: a voice it started for a note-on has ended, with that note-on's ID, port, channel and key.
+    | { at: number; type: "note-end"; key: number; channel: number; port: number; noteId: number; target?: number }
     | { at: number; type: "param"; id: number; value: number; target?: number }
-    | { at: number; type: "param-mod"; id: number; value: number; key?: number; channel?: number; target?: number }
+    | {
+          at: number;
+          type: "param-mod";
+          id: number;
+          value: number;
+          key?: number;
+          channel?: number;
+          noteId?: number;
+          target?: number;
+      }
     | {
           at: number;
           type: "expression";
@@ -25,6 +46,7 @@ export type Event =
           key: number;
           value: number;
           channel?: number;
+          noteId?: number;
           target?: number;
       }
     // A plug-in's interface began or ended moving a parameter (one undo step, for a host that keeps them).

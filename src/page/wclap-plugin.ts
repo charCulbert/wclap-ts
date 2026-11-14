@@ -134,6 +134,11 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
         return this.host.schedule({ type: "note-off", key, velocity, channel }, when, this.id);
     }
 
+    // Stops every note held on the key at once, with no release (a closed hi-hat cutting off an open one).
+    choke(key: number, when?: number, channel = 0): boolean {
+        return this.host.schedule({ type: "note-choke", key, velocity: 0, channel }, when, this.id);
+    }
+
     param(id: number, value: number, when?: number): boolean {
         const scheduled = this.host.schedule({ type: "param", id, value }, when, this.id);
         // Followers (panels, knobs) hear of it when it takes effect, not when it was scheduled.

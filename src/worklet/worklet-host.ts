@@ -118,7 +118,7 @@ class HostProcessor extends Base {
         const notesOut = (blockStart: number, notes: readonly Event[], count: number) => {
             for (let i = 0; i < count; i++) {
                 const e = notes[i];
-                if (e && !back.push(blockStart + e.at, e)) this.#backDropped++;
+                if (e && e.type !== "note-end" && !back.push(blockStart + e.at, e)) this.#backDropped++;
             }
         };
         this.#chain = make({

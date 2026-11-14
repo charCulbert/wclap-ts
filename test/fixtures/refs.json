@@ -114,9 +114,9 @@
         "notesOut": 0
     },
     "note-ids": {
-        "sha256": "de9dbf29cb02d3f748d372677104bdbaa5e1010de295ee953cf4310b7e74ffc4",
-        "peak": 2,
-        "rms": 0.0108,
+        "sha256": "13f123e785d89d71ee2e28168a1de27419472be657dcf58288868545dae6ddfc",
+        "peak": 3,
+        "rms": 0.0165,
         "notesOut": 0
     }
 }

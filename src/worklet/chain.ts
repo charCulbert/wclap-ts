@@ -143,13 +143,13 @@ export class Chain implements Topology {
         }
     }
 
-    // The plug-in's own notes go on to the next one (its parameter changes went to the page).
+    // The plug-in's own notes go on to the next one with the note IDs it gave them (its parameter changes went to
+    // the page). Its NOTE_ENDs stop here: they answer the note-ons it was sent, and the runner has used them.
     #passOutput(out: OutputList): void {
         this.#passingCount = 0;
         for (let k = 0; k < out.count; k++) {
             const e = out.events[k];
-            if (e && (e.type === "note-on" || e.type === "note-off" || e.type === "expression"))
-                if (this.#passingCount < MAX_EVENTS) this.#passing[this.#passingCount++] = e;
+            if (e && passes(e) && this.#passingCount < MAX_EVENTS) this.#passing[this.#passingCount++] = e;
         }
     }
 
@@ -167,13 +167,14 @@ export class Chain implements Topology {
         }
         for (let k = 0; k < this.#passingCount && n < MAX_EVENTS; k++) {
             const e = this.#passing[k];
-            if (e?.type !== "note-on" && e?.type !== "note-off") continue;
+            if (e?.type !== "note-on" && e?.type !== "note-off" && e?.type !== "note-choke") continue;
             const channel = e.channel ?? 0;
-            if (channel >= 0 && e.key >= 0) {
+            if (e.type !== "note-choke" && channel >= 0 && e.key >= 0) {
                 mark(this.#sent, channel, e.key, e.type === "note-on");
                 list[n++] = e;
-            } else if (e.type === "note-off")
-                // CLAP's -1 means any key or channel; MIDI has no such thing, so it becomes each matching note.
+            } else if (e.type !== "note-on")
+                // MIDI has no choke, and nothing like CLAP's -1 for any key or channel: either becomes a note-off
+                // for each matching note sent.
                 for (let c = 0; c < 16; c++)
                     for (let key = 0; key < 128 && n < MAX_EVENTS; key++) {
                         if ((channel >= 0 && c !== channel) || (e.key >= 0 && key !== e.key)) continue;
@@ -221,10 +222,15 @@ export class Chain implements Topology {
         let k = 0;
         for (let i = 0; i < n; i++) {
             const e = this.#events[i];
-            if (e && (e.type === "note-on" || e.type === "note-off" || e.type === "expression")) this.#passing[k++] = e;
+            if (e && passes(e)) this.#passing[k++] = e;
         }
         this.#passingCount = k;
     }
+}
+
+// What goes on from one plug-in to the next: notes and their expressions.
+function passes(e: Event): boolean {
+    return e.type === "note-on" || e.type === "note-off" || e.type === "note-choke" || e.type === "expression";
 }
 
 // Port by port; a mono port feeds every channel of its output, and outputs with no source are silent.

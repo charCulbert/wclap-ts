@@ -2,14 +2,31 @@
 // should land on. The audio side keeps them in time order until their block and never allocates.
 import { MAX_EVENTS } from "../plugin/clap-host-callbacks.ts";
 import type { Event } from "../plugin/plugin-types.ts";
+import { HeldNotes } from "./held-notes.ts";
 
-// An event without its frame in a block: the queue stamps it with an audio frame instead.
-export type Timed = Event extends infer E ? (E extends unknown ? Omit<E, "at"> : never) : never;
+// An event without its frame in a block: the queue stamps it with an audio frame instead. Note IDs aren't carried:
+// the scheduler gives them out (a NOTE_END only ever comes from a plug-in).
+type Queued = Exclude<Event, { type: "note-end" }>;
+export type Timed = Queued extends infer E ? (E extends unknown ? Omit<E, "at" | "noteId"> : never) : never;
 
 // frame, kind, key or id, velocity or value, channel, target, and per kind: a modulation's key, an expression's id
 const FIELDS = 7;
-const KINDS = ["note-on", "note-off", "param", "param-mod", "expression", "gesture-begin", "gesture-end"] as const;
+const KINDS = [
+    "note-on",
+    "note-off",
+    "param",
+    "param-mod",
+    "expression",
+    "gesture-begin",
+    "gesture-end",
+    "note-choke",
+] as const;
 const NOTE_OFF = KINDS.indexOf("note-off");
+const NOTE_CHOKE = KINDS.indexOf("note-choke");
+// Note-offs and chokes end notes: they're never the event dropped to make room.
+const ends = (kind: number | undefined) => kind === NOTE_OFF || kind === NOTE_CHOKE;
+// Note IDs count up from 0 and start again past the largest a CLAP note ID can be.
+const MAX_NOTE_ID = 0x7fffffff;
 
 // A ring of entries with one slot always free, so "full" and "empty" differ; the two indices are atomics.
 export class EventQueue {
@@ -40,7 +57,7 @@ export class EventQueue {
         e[at] = frame;
         e[at + 1] = KINDS.indexOf(event.type);
         e[at + 5] = target;
-        if (event.type === "note-on" || event.type === "note-off") {
+        if (event.type === "note-on" || event.type === "note-off" || event.type === "note-choke") {
             e[at + 2] = event.key;
             e[at + 3] = event.velocity;
             e[at + 4] = event.channel ?? 0;
@@ -89,7 +106,8 @@ export class EventQueue {
 function decode(p: Float64Array, at: number, event: Record<string, unknown>): void {
     const type = KINDS[p[at + 1] ?? 0];
     event.type = type;
-    if (type === "note-on" || type === "note-off") {
+    event.noteId = -1;
+    if (type === "note-on" || type === "note-off" || type === "note-choke") {
         event.key = p[at + 2];
         event.velocity = p[at + 3];
         event.channel = p[at + 4];
@@ -119,11 +137,19 @@ function blank(): Event {
         id: 0,
         value: 0,
         expression: 0,
+        noteId: -1,
         target: -1,
     } as Event;
 }
 
 // The audio side: events from the queue, held in time order, handed out block by block.
+//
+// Each note-on handed out gets a note ID of its own, and the note-off that ends it the same ID. A note-off names only
+// its key and channel, so it ends the oldest note still held on that key and channel for the same plug-in: two
+// note-ons on one key, then two note-offs, end the first note and then the second. A note-off with nothing held to
+// match (or with CLAP's -1 for its key or channel) goes without an ID, which ends every voice it matches; so does a
+// choke, which stops every note held on its key and channel. A plug-in's NOTE_END doesn't change this: the page's
+// note-off still comes, and pairs with its note-on as before.
 export class Scheduler {
     readonly #queue: EventQueue;
     readonly #pending: Float64Array;
@@ -131,6 +157,8 @@ export class Scheduler {
     readonly #pool: Event[];
     readonly #take = (e: Float64Array, at: number) => this.#insert(e, at);
     readonly #result: { events: readonly Event[]; count: number };
+    readonly #held = new HeldNotes();
+    #nextId = 0;
     late = 0;
     dropped = 0;
 
@@ -151,9 +179,9 @@ export class Scheduler {
         if (this.#count === this.#pool.length) {
             this.dropped++;
             // A lost note-off leaves a note hanging: make room by dropping the latest event that isn't one.
-            if (e[at + 1] !== NOTE_OFF) return;
+            if (!ends(e[at + 1])) return;
             let victim = this.#count - 1;
-            while (victim >= 0 && this.#pending[victim * FIELDS + 1] === NOTE_OFF) victim--;
+            while (victim >= 0 && ends(this.#pending[victim * FIELDS + 1])) victim--;
             if (victim < 0) return;
             this.#pending.copyWithin(victim * FIELDS, (victim + 1) * FIELDS, this.#count * FIELDS);
             this.#count--;
@@ -179,11 +207,26 @@ export class Scheduler {
             const event = this.#pool[n] as Record<string, unknown>;
             event.at = Math.max(0, Math.floor(offset));
             decode(p, at, event);
+            this.#noteId(event as Event);
             n++;
         }
         p.copyWithin(0, n * FIELDS, this.#count * FIELDS);
         this.#count -= n;
         this.#result.count = n;
         return this.#result;
+    }
+
+    #noteId(e: Event): void {
+        if (e.type !== "note-on" && e.type !== "note-off" && e.type !== "note-choke") return;
+        const channel = e.channel ?? 0;
+        const target = e.target ?? -1;
+        if (e.type === "note-on") {
+            if (channel < 0 || e.key < 0) return;
+            e.noteId = this.#nextId;
+            this.#nextId = this.#nextId === MAX_NOTE_ID ? 0 : this.#nextId + 1;
+            this.#held.on(channel, e.key, e.noteId, target);
+        } else if (e.type === "note-off" && channel >= 0 && e.key >= 0)
+            e.noteId = this.#held.takeOldest(channel, e.key, target);
+        else this.#held.off(channel, e.key, -1, target);
     }
 }

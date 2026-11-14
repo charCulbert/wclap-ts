@@ -4,6 +4,8 @@
 import {
     CLAP_CORE_EVENT_SPACE_ID,
     CLAP_EVENT_MIDI,
+    CLAP_EVENT_NOTE_CHOKE,
+    CLAP_EVENT_NOTE_END,
     CLAP_EVENT_NOTE_OFF,
     CLAP_EVENT_NOTE_ON,
     CLAP_EVENT_PARAM_GESTURE_BEGIN,
@@ -72,7 +74,18 @@ export class OutputList {
     constructor(capacity = MAX_EVENTS) {
         this.events = Array.from(
             { length: capacity },
-            () => ({ at: 0, type: "note-on", key: 0, velocity: 0, channel: 0, id: 0, value: 0 }) as Event,
+            () =>
+                ({
+                    at: 0,
+                    type: "note-on",
+                    key: 0,
+                    velocity: 0,
+                    channel: 0,
+                    noteId: -1,
+                    port: 0,
+                    id: 0,
+                    value: 0,
+                }) as Event,
         );
     }
     pushGesture(at: number, id: number, begin: boolean): boolean {
@@ -95,13 +108,24 @@ export class OutputList {
         this.count++;
         return true;
     }
-    push(at: number, type: "note-on" | "note-off", key: number, velocity: number, channel: number): boolean {
+    // A note as the plug-in sent it, with its note ID (-1: none) and port.
+    push(
+        at: number,
+        type: "note-on" | "note-off" | "note-choke" | "note-end",
+        key: number,
+        velocity: number,
+        channel: number,
+        noteId = -1,
+        port = 0,
+    ): boolean {
         const e = this.events[this.count] as {
             at: number;
             type: string;
             key: number;
             velocity: number;
             channel: number;
+            noteId: number;
+            port: number;
         };
         if (!e) return false;
         e.at = at;
@@ -109,6 +133,8 @@ export class OutputList {
         e.key = key;
         e.velocity = velocity;
         e.channel = channel;
+        e.noteId = noteId;
+        e.port = port;
         this.count++;
         return true;
     }
@@ -159,22 +185,31 @@ const SLOTS = [
     [clap_output_events, "try_push"],
 ] as const;
 
-// A note leaving the plug-in, as a CLAP note event or a MIDI note message; anything else is accepted and dropped.
+// By CLAP_EVENT_NOTE_ON, _OFF, _CHOKE and _END: 0 to 3.
+const NOTE_TYPES = ["note-on", "note-off", "note-choke", "note-end"] as const;
+
+// A note leaving the plug-in, as a CLAP note event (with the note ID it gave) or a MIDI note message; anything else
+// is accepted and dropped.
 function readOutput(wasm: Wasm, at: number, out: OutputList): boolean {
     const v = wasm.view;
     if (v.getUint16(at + 8, true) !== CLAP_CORE_EVENT_SPACE_ID) return true;
     const type = v.getUint16(at + 10, true);
     const time = v.getUint32(at + 4, true);
-    if (type === CLAP_EVENT_NOTE_ON || type === CLAP_EVENT_NOTE_OFF) {
-        const on = type === CLAP_EVENT_NOTE_ON;
+    if (
+        type === CLAP_EVENT_NOTE_ON ||
+        type === CLAP_EVENT_NOTE_OFF ||
+        type === CLAP_EVENT_NOTE_CHOKE ||
+        type === CLAP_EVENT_NOTE_END
+    )
         return out.push(
             time,
-            on ? "note-on" : "note-off",
+            NOTE_TYPES[type] ?? "note-off",
             v.getInt16(at + 24, true),
             v.getFloat64(at + 32, true),
             v.getInt16(at + 22, true),
+            v.getInt32(at + 16, true),
+            v.getInt16(at + 20, true),
         );
-    }
     if (type === CLAP_EVENT_PARAM_VALUE)
         return out.pushParam(time, v.getUint32(at + 16, true), v.getFloat64(at + 40, true));
     if (type === CLAP_EVENT_PARAM_GESTURE_BEGIN || type === CLAP_EVENT_PARAM_GESTURE_END)
