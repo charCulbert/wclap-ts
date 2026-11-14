@@ -58,6 +58,11 @@ export class Control {
         Atomics.notify(this.#ints, REQUESTS);
     }
 
+    // Main side: wakes the serve loop, for a request already noted on this side.
+    wake(): void {
+        Atomics.notify(this.#ints, REQUESTS);
+    }
+
     // Audio side: whether the request was made since the last take.
     takeAudio(request: "process" | "params-flush"): boolean {
         const bit = BITS[request];

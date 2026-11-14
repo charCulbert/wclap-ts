@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { CLAP_EXT_LATENCY, CLAP_EXT_STATE, clap_host_latency, clap_host_state } from "../src/plugin/clap.generated.ts";
 import { type Behaviour, installHost, OutputList, type Request } from "../src/plugin/clap-host-callbacks.ts";
 import { PluginAudio } from "../src/plugin/plugin-audio-thread.ts";
 import { PluginMain } from "../src/plugin/plugin-main-thread.ts";
 import { Plugin } from "../src/plugin/plugin-one-thread.ts";
-import type { Event } from "../src/plugin/plugin-types.ts";
+import type { Change, Event } from "../src/plugin/plugin-types.ts";
 import { canAttach, Instance } from "../src/plugin/wasm-instance.ts";
+import { NULL } from "../src/plugin/wasm-struct.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
 import { Control, State } from "../src/threads/control-block.ts";
 import { AudioSide, MainThread } from "../src/threads/two-threads.ts";
@@ -155,6 +157,40 @@ test("without Atomics.waitAsync the control block polls: requests and state chan
     } finally {
         Atomics.waitAsync = waitAsync;
     }
+});
+
+test("two threads: a request the plug-in makes while idle runs is handled once, not again by the serve loop", async () => {
+    const bundle = await fixture("PICOH-101");
+    const options = { module: bundle.module, memory: bundle.memory, sampleRate: 48000, maxFrames: 128 };
+    const changes: Change[] = [];
+    let host = (_ext: "latency" | "state") => undefined as unknown;
+    const { main } = MainThread.start(options, {
+        ...quiet,
+        // Asking for something from inside idle, as a plug-in may from on_main_thread or a timer.
+        onChange: (what) => {
+            changes.push(what);
+            if (what === "latency") host("state");
+        },
+    });
+    // The plug-in's own calls to its host: the host's functions by their table index.
+    const { instance } = main.plugin;
+    const extensions = new Map(main.plugin.hostExtensions());
+    host = (ext) => {
+        const index = (id: string, at: number) => instance.wasm.read("u32", (extensions.get(id) ?? 0) + at) as number;
+        if (ext === "latency") {
+            const struct = instance.allocStruct(clap_host_latency);
+            struct.setIndex("changed", index(CLAP_EXT_LATENCY, clap_host_latency.fields.changed.at));
+            return struct.call("changed", NULL);
+        }
+        const struct = instance.allocStruct(clap_host_state);
+        struct.setIndex("mark_dirty", index(CLAP_EXT_STATE, clap_host_state.fields.mark_dirty.at));
+        return struct.call("mark_dirty", NULL);
+    };
+    host("latency");
+    main.plugin.idle();
+    main.plugin.idle(); // the serve loop's next pass
+    assert.deepEqual(changes, ["latency", "state"]);
+    await main.stop(50, true);
 });
 
 const fixture = (name: string) => openBundle(readFileSync(new URL(`fixtures/${name}.wclap.tar.gz`, import.meta.url)));

@@ -96,8 +96,11 @@ export class MainThread {
             options,
             {
                 ...main,
+                // Noted on this side already: the audio side's requests go across, the rest only wake the serve
+                // loop, so it doesn't handle them a second time.
                 onRequest: (r) => {
-                    control.request(r);
+                    if (r === "process" || r === "params-flush") control.request(r);
+                    else control.wake();
                     main.onRequest?.(r);
                 },
             },
