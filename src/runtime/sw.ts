@@ -28,19 +28,21 @@ sw.addEventListener("install", () => void sw.skipWaiting());
 sw.addEventListener("activate", (event: ExtendableEvent) => event.waitUntil(sw.clients.claim()));
 sw.addEventListener("fetch", (event: FetchEvent) => {
     if (event.request.method !== "GET" || new URL(event.request.url).origin !== sw.location.origin) return;
+    const path = new URL(event.request.url).pathname;
+    // A bundle's files are cached by name alone; an interface may be opened with a query (index.html?device=...).
+    const bundled = path.includes("/bundles/");
     event.respondWith(
         (async () => {
             const response =
                 (await fromPlugin(event.request.url)) ??
-                (await caches.match(event.request)) ??
+                (await caches.match(event.request, { ignoreSearch: bundled })) ??
                 (await fetch(event.request));
             if (!response.status) return response;
             const headers = new Headers(response.headers);
             headers.set("Cross-Origin-Opener-Policy", "same-origin");
             headers.set("Cross-Origin-Embedder-Policy", "require-corp");
             // Interface files may be embedded from another origin (ChainOptions.uiBase); everything else stays home.
-            const path = new URL(event.request.url).pathname;
-            const shared = path.includes("/bundles/") || path.includes("/ui/");
+            const shared = bundled || path.includes("/ui/");
             headers.set("Cross-Origin-Resource-Policy", shared ? "cross-origin" : "same-origin");
             // A 204 or 304 can't be given a body, not even an empty one: the Response constructor throws.
             const body = [101, 103, 204, 205, 304].includes(response.status) ? null : response.body;
