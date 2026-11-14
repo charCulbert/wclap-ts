@@ -1,7 +1,9 @@
 // How long each fixture takes per block, against a saved baseline: fails if any is more than 20% slower. Times are
 // in units of a fixed arithmetic loop timed on the same run, so a faster or slower machine moves them less; still,
 // keep the baseline from one machine. `npm run perf`, or `npm run perf -- --update` to save a new baseline.
+import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { EventQueue, Scheduler } from "../src/events/event-queue.ts";
 import { Plugin } from "../src/plugin/plugin-one-thread.ts";
 import { Instance } from "../src/plugin/wasm-instance.ts";
@@ -58,10 +60,25 @@ function calibrate(): number {
     return best;
 }
 
+// Each fixture is measured in a fresh process (`--one <name>` prints its value), so one fixture's JIT and memory
+// state can't move another's numbers.
+const fixtures = [...local, ...outside];
+const one = process.argv[process.argv.indexOf("--one") + 1];
+if (process.argv.includes("--one")) {
+    const fixture = fixtures.find((f) => f.name === one);
+    if (!fixture) throw new Error(`no fixture ${one}`);
+    const unit = calibrate();
+    console.log(Math.round(((await measure(await fixture.bytes())) / unit) * 1e6) / 100); // per 10,000 units
+    process.exit(0);
+}
 const unit = calibrate();
 const now: Record<string, number> = {};
-for (const { name, bytes } of [...local, ...outside])
-    now[name] = Math.round(((await measure(await bytes())) / unit) * 1e6) / 100; // per 10,000 units
+for (const { name, bytes } of fixtures) {
+    await bytes(); // fetched once, here, not in every child
+    const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--one", name], { encoding: "utf8" });
+    if (child.status !== 0) throw new Error(`${name}: ${child.stderr}`);
+    now[name] = Number(child.stdout.trim());
+}
 
 if (update) {
     writeFileSync(file, `${JSON.stringify(now, null, 4)}\n`);
