@@ -314,12 +314,13 @@ const lifecycle = async () => {
         [4736, 62],
         [5120, 65],
     ]);
-    const blocks = new Map<number, { marker: Float32Array; steady: Float32Array; tail: number }>();
+    const blocks = new Map<number, { marker: Float32Array; steady: Float32Array; tail: number; skipped: boolean }>();
     for (let start = 0; start < 5248; start += 128) {
         const key = keys.get(start);
         const out = plugin.process(128, key ? [{ at: 0, type: "note-on", key, velocity: 1 }] : []);
         const copy = (port: number) => Float32Array.from(out[port]?.[0] ?? []);
-        blocks.set(start, { marker: copy(0), steady: copy(1), tail: plugin.main.tail() });
+        const skipped = plugin.audio?.skipped ?? false;
+        blocks.set(start, { marker: copy(0), steady: copy(1), tail: plugin.main.tail(), skipped });
         plugin.idle();
     }
     plugin.destroy();
@@ -350,21 +351,26 @@ test("process-lifecycle: each woken block's marker and steady time, the tails it
     assert.deepEqual([marker(5120), constant(block(5120).steady)], [0, 0], "the 9.0 error block cleared");
 });
 
-test("process-lifecycle: blocks while it sleeps and after its finite tail are skipped and silent", {
-    todo: "wclap-ts processes every block; sleep, tail and skip diagnostics not implemented (plan: Process status)",
-}, async () => {
+test("process-lifecycle: blocks while it sleeps and after its finite tail are skipped and silent", async () => {
     const block = await lifecycle();
-    const skipped = [
-        [256, 1024],
-        [1152, 2048],
-        [2432, 3072], // the 256-sample tail ends at 2431
-        [3584, 4096],
-        [4352, 4608],
-        [4736, 5120],
+    // Each run of processed blocks: the start-up block and its request_process wake, then each note's blocks. Key
+    // 62's own block is processed (it returns SLEEP from it); so is key 61's quiet block at 4224.
+    const processed = [
+        [0, 256],
+        [1024, 1280],
+        [2048, 2432], // the entry block and the 256-sample tail
+        [3072, 3712], // the infinite tail, until key 62
+        [4096, 4352],
+        [4608, 4864],
+        [5120, 5248],
     ];
-    for (const [from = 0, to = 0] of skipped)
-        for (let start = from; start < to; start += 128)
-            assert.deepEqual([constant(block(start).marker), constant(block(start).steady)], [0, 0], `${start}`);
+    const awake = (start: number) => processed.some(([from = 0, to = 0]) => start >= from && start < to);
+    for (let start = 0; start < 5248; start += 128) {
+        const b = block(start);
+        assert.equal(b.skipped, !awake(start), `${start}`);
+        if (b.skipped) assert.deepEqual([constant(b.marker), constant(b.steady)], [0, 0], `${start} silent`);
+    }
+    assert.equal(constant(block(3584).steady), 3584 / 65536, "key 62's own block is processed");
 });
 
 // gui-lifecycle: its interface's open order, files and messages are in plugin.test.ts ("an interface with several

@@ -19,6 +19,7 @@ import {
     CLAP_EXT_NOTE_PORTS,
     CLAP_EXT_PARAMS,
     CLAP_EXT_STATE,
+    CLAP_EXT_TAIL,
     CLAP_EXT_THREAD_CHECK,
     CLAP_EXT_WEBVIEW,
     CLAP_NOTE_DIALECT_CLAP,
@@ -38,6 +39,7 @@ import {
     clap_host_note_ports,
     clap_host_params,
     clap_host_state,
+    clap_host_tail,
     clap_host_thread_check,
     clap_host_webview,
     clap_input_events,
@@ -180,6 +182,7 @@ const SLOTS = [
     [clap_host_webview, "send"],
     [clap_host_latency, "changed"],
     [clap_host_note_name, "changed"],
+    [clap_host_tail, "changed"],
     [clap_input_events, "size"],
     [clap_input_events, "get"],
     [clap_output_events, "try_push"],
@@ -249,6 +252,8 @@ export function installHost(wasm: Wasm, b: Behaviour): number[] {
         "clap_host_note_ports.rescan": () => b.request("note-names"),
         "clap_host_latency.changed": () => b.request("latency"),
         "clap_host_note_name.changed": () => b.request("note-names"),
+        // The audio side reads the tail on every block the plug-in returns TAIL from.
+        "clap_host_tail.changed": () => undefined,
         "clap_host_gui.resize_hints_changed": () => void b.gui("hints"),
         "clap_host_gui.request_resize": (_host: number, width: number, height: number) =>
             b.gui("resize", width, height),
@@ -314,6 +319,7 @@ export function writeHost(instance: Instance, slots: number[]): HostStructs {
         [CLAP_EXT_WEBVIEW, fill(clap_host_webview).at],
         [CLAP_EXT_LATENCY, fill(clap_host_latency).at],
         [CLAP_EXT_NOTE_NAME, fill(clap_host_note_name).at],
+        [CLAP_EXT_TAIL, fill(clap_host_tail).at],
     ]);
     return {
         host: host.at,

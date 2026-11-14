@@ -24,11 +24,17 @@ import {
     clap_event_transport,
     clap_plugin,
     clap_plugin_params,
+    clap_plugin_tail,
     clap_process,
 } from "./clap.generated.ts";
 import { EVENT_SIZE, type EventList, MAX_EVENTS, type OutputList } from "./clap-host-callbacks.ts";
 import type { AudioSetup, Event, Transport } from "./plugin-types.ts";
+import { ProcessStatus } from "./process-status.ts";
 import { asPtr, NULL, type Ptr, type Struct, type Wasm } from "./wasm-struct.ts";
+
+// Takes a request the plug-in made of the audio side (from any of its threads): true if it was made since the last
+// take.
+export type TakeRequest = (request: "process" | "params-flush") => boolean;
 
 export class PluginAudio {
     readonly wasm: Wasm;
@@ -43,18 +49,32 @@ export class PluginAudio {
     readonly #expression: Struct<typeof clap_event_note_expression>;
     readonly #transport: Struct<typeof clap_event_transport>;
     readonly #params: Struct<typeof clap_plugin_params> | undefined;
+    readonly #tail: Struct<typeof clap_plugin_tail> | undefined;
+    readonly #take: TakeRequest;
+    readonly #status = new ProcessStatus();
+    readonly #readTail = () => this.#tail?.call("get", this.#plugin.at) ?? 0;
     // The notes the plug-in sent out in the last block.
     readonly output: OutputList;
     #processing = false;
     #steadyTime = 0;
+    #skipped = false;
 
-    // `events`, `output` and `thread` are what this thread's host functions read and write.
-    constructor(wasm: Wasm, setup: AudioSetup, events: EventList, output: OutputList, thread: { audio: boolean }) {
+    // `events`, `output` and `thread` are what this thread's host functions read and write; `take` reads the
+    // plug-in's request_process and params.request_flush.
+    constructor(
+        wasm: Wasm,
+        setup: AudioSetup,
+        events: EventList,
+        output: OutputList,
+        thread: { audio: boolean },
+        take: TakeRequest = () => false,
+    ) {
         this.wasm = wasm;
         this.setup = setup;
         this.#events = events;
         this.output = output;
         this.#thread = thread;
+        this.#take = take;
         this.#transport = wasm.struct(clap_event_transport, asPtr(setup.transport));
         this.#plugin = wasm.struct(clap_plugin, asPtr(setup.plugin));
         this.#process = wasm.struct(clap_process, asPtr(setup.process));
@@ -63,6 +83,7 @@ export class PluginAudio {
         this.#header = wasm.struct(clap_event_header, NULL);
         this.#expression = wasm.struct(clap_event_note_expression, NULL);
         this.#params = setup.params ? wasm.struct(clap_plugin_params, asPtr(setup.params)) : undefined;
+        this.#tail = setup.tail ? wasm.struct(clap_plugin_tail, asPtr(setup.tail)) : undefined;
         events.at = setup.events;
     }
 
@@ -71,6 +92,7 @@ export class PluginAudio {
     // the audio thread, between process calls.
     // From the audio thread, while it isn't processing a block: clears delay lines and voices.
     reset(): void {
+        this.#status.reset();
         this.#thread.audio = true;
         try {
             this.#plugin.call("reset", this.#plugin.at);
@@ -80,6 +102,7 @@ export class PluginAudio {
     }
 
     flush(events: readonly Event[], count: number): void {
+        this.#take("params-flush");
         this.output.count = 0;
         if (!this.#params) return;
         let n = 0;
@@ -106,9 +129,15 @@ export class PluginAudio {
         return this.#processing;
     }
 
+    // Whether the last block was skipped because the plug-in sleeps (a diagnostic; its output was silence).
+    get skipped(): boolean {
+        return this.#skipped;
+    }
+
     // Events in time order, at their frame in the block (the first `count`); inputs and outputs per port, per
     // channel. The outputs are views of the plug-in's memory, valid until the next call. Once the block size is
-    // steady this allocates nothing.
+    // steady this allocates nothing. While the plug-in sleeps (its process status) the block is skipped: its outputs
+    // are silent and steady_time still moves on.
     process(
         frames: number,
         events: readonly Event[] = [],
@@ -140,28 +169,41 @@ export class PluginAudio {
             }
         }
 
+        const flush = this.#take("params-flush");
+        const requested = this.#take("process");
+        this.#skipped = this.#status.skip(count > 0 || requested, views.inputs, frames);
+        if (this.#skipped) {
+            this.#steadyTime += frames;
+            for (const port of views.outputs) for (const channel of port) channel.fill(0);
+            // A flush it asked for while asleep: params.flush, which leaves it asleep.
+            if (flush) this.flush(events, 0);
+            else this.output.count = 0;
+            return this.#viewsFor(frames).outputs;
+        }
+
         this.#process.set("steady_time", transport?.frame ?? this.#steadyTime);
         this.#process.set("frames_count", frames);
         this.#process.set("transport", transport ? this.#writeTransport(transport) : NULL);
         this.#events.count = count;
         this.output.count = 0;
         this.#thread.audio = true;
-        let status: number;
+        let outputs: Float32Array[][];
         try {
             if (!this.#processing) {
                 if (!this.#plugin.call("start_processing", this.#plugin.at)) throw new Error("start_processing failed");
                 this.#processing = true;
             }
-            status = this.#plugin.call("process", this.#plugin.at, this.#process.at);
+            const status = this.#plugin.call("process", this.#plugin.at, this.#process.at);
+            // The plug-in may have grown its memory while processing.
+            outputs = this.#viewsFor(frames).outputs;
+            // CLAP: on an error, the output is discarded; the plug-in carries on.
+            if (status === CLAP_PROCESS_ERROR) for (const port of outputs) for (const channel of port) channel.fill(0);
+            this.#status.after(status, outputs, frames, this.#readTail);
         } finally {
             this.#thread.audio = false;
             this.#events.count = 0;
         }
         this.#steadyTime += frames;
-        // The plug-in may have grown its memory while processing.
-        const outputs = this.#viewsFor(frames).outputs;
-        // CLAP: on an error, the output is discarded; the plug-in carries on.
-        if (status === CLAP_PROCESS_ERROR) for (const port of outputs) for (const channel of port) channel.fill(0);
         return outputs;
     }
 
@@ -191,6 +233,7 @@ export class PluginAudio {
     }
 
     stop(): void {
+        this.#status.reset();
         if (!this.#processing) return;
         this.#processing = false;
         this.#thread.audio = true;

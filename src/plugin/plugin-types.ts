@@ -85,6 +85,8 @@ export interface AudioSetup {
     extensions: [string, number][];
     // The plug-in's clap.params, for flush; 0 without one.
     params: number;
+    // The plug-in's clap.tail, read while it's in its tail; 0 without one.
+    tail: number;
 }
 
 // Tempo and play state for plug-ins that follow the host (arpeggiators, synced delays).

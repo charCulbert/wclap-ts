@@ -30,9 +30,9 @@
         "notesOut": 0
     },
     "process-lifecycle": {
-        "sha256": "0195684e8b8a7d598a16eb1a4569e173f14b4ee321b350e27d7bcd9d46ad8ffc",
+        "sha256": "b82e8e6ac31ce442767b259c0ea14ecf87894696bd15754c67fd988b30531c6f",
         "peak": 0.6,
-        "rms": 0.5452,
+        "rms": 0.5267,
         "notesOut": 0
     },
     "hive": {

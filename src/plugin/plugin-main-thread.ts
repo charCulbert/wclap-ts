@@ -422,6 +422,7 @@ export class PluginMain {
         process.set("transport", transport.at);
         const setup: AudioSetup = {
             params: this.extension(CLAP_EXT_PARAMS, clap_plugin_params)?.at ?? 0,
+            tail: this.extension(CLAP_EXT_TAIL, clap_plugin_tail)?.at ?? 0,
             plugin: this.plugin.at,
             process: process.at,
             transport: transport.at,
@@ -482,6 +483,13 @@ export class PluginMain {
     // The host's extensions as written in the plug-in's memory, for other instances' get_extension.
     hostExtensions(): [string, number][] {
         return [...this.#host.extensions];
+    }
+
+    // For the audio side on this thread: a request_process or params.request_flush from this instance or, through
+    // the control block, from the plug-in's other threads.
+    takeAudioRequest(request: "process" | "params-flush"): boolean {
+        const here = this.requests.delete(request);
+        return (this.#options.control?.takeAudio(request) ?? false) || here;
     }
 
     // Main-thread work the plug-in asked for.

@@ -4,6 +4,8 @@ import type { Request } from "../plugin/clap-host-callbacks.ts";
 
 const STATE = 0;
 const REQUESTS = 1;
+// Requests for the audio side: request_process and params.request_flush.
+const AUDIO = 2;
 
 // idle → active (the main side activated; the audio side starts processing on its next block) → stopping (the main
 // side asks) → stopped (the audio side stopped processing; the main side may deactivate). failed: the plug-in trapped
@@ -27,7 +29,7 @@ export class Control {
     readonly #ints: Int32Array;
 
     static create(): Control {
-        return new Control(new SharedArrayBuffer(8));
+        return new Control(new SharedArrayBuffer(12));
     }
 
     constructor(buffer: SharedArrayBuffer) {
@@ -44,10 +46,20 @@ export class Control {
         Atomics.notify(this.#ints, STATE);
     }
 
-    // Either side; wakes the main side.
+    // Either side; wakes the main side, or leaves a request for the audio side.
     request(request: Request): void {
+        if (request === "process" || request === "params-flush") {
+            Atomics.or(this.#ints, AUDIO, BITS[request]);
+            return;
+        }
         Atomics.or(this.#ints, REQUESTS, BITS[request]);
         Atomics.notify(this.#ints, REQUESTS);
+    }
+
+    // Audio side: whether the request was made since the last take.
+    takeAudio(request: "process" | "params-flush"): boolean {
+        const bit = BITS[request];
+        return (Atomics.and(this.#ints, AUDIO, ~bit) & bit) !== 0;
     }
 
     // Main side: the requests made since the last call.

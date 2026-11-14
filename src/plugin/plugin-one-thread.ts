@@ -37,6 +37,10 @@ export class Plugin {
     get ports(): Ports {
         return this.main.ports;
     }
+    // The audio half, once active.
+    get audio(): PluginAudio | undefined {
+        return this.#audio;
+    }
 
     extension<L extends Layout>(id: string, layout: L): Struct<L> | null {
         return this.main.extension(id, layout);
@@ -61,7 +65,10 @@ export class Plugin {
 
     activate(sampleRate: number, maxFrames: number): void {
         const setup = this.main.activate(sampleRate, maxFrames);
-        this.#audio = new PluginAudio(this.instance.wasm, setup, this.main.events, this.main.output, this.main.thread);
+        const main = this.main;
+        this.#audio = new PluginAudio(this.instance.wasm, setup, main.events, main.output, main.thread, (r) =>
+            main.takeAudioRequest(r),
+        );
     }
 
     process(

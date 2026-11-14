@@ -57,6 +57,20 @@ test("a restart request on two threads: stop, reactivate on the main side, resum
     await main.stop(50);
 });
 
+test("two threads: the audio side takes the plug-in's request_process and params.request_flush each block", async () => {
+    const bundle = await fixture("PICOH-101");
+    const options = { module: bundle.module, memory: bundle.memory, sampleRate: 48000, maxFrames: 128 };
+    const { main, started } = MainThread.start(options, quiet);
+    const audio = new AudioSide(started.audio, () => undefined);
+    main.control.request("process");
+    main.control.request("params-flush");
+    assert.deepEqual(main.control.take(), [], "nothing for the main side");
+    assert.ok(audio.process(128, [], [], 0, transport));
+    assert.deepEqual([main.control.takeAudio("process"), main.control.takeAudio("params-flush")], [false, false]);
+    assert.equal(audio.audio.skipped, false);
+    assert.equal(await main.stop(50, true), true);
+});
+
 test("stop leaves the plug-in alone when the audio side never confirms", async () => {
     const bundle = await fixture("PICOH-101");
     const options = { module: bundle.module, memory: bundle.memory, sampleRate: 48000, maxFrames: 128 };

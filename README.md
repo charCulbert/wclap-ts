@@ -90,6 +90,11 @@ All plug-ins in a chain run in one AudioWorkletNode, in order, within each block
 the next. Notes a plug-in sends out go to the next plug-in in the same block, with the note IDs it gave them, and the
 last plug-in's notes come out of the chain (`chain.connectMidiOut(output)`).
 
+A plug-in that says it has nothing to do (CLAP's process status) isn't called again until it does: until an event is
+due, its input has sound, or it asks to be processed. One that returns "continue if not quiet" stops after a silent
+block, and one with a tail stops once its `tail()` has played out after the input went silent. While it isn't called
+its output is silence, and its time (`steady_time`) still moves on. Bypass, reset and restart wake it.
+
 A plug-in that crashes (in WebAssembly, a trap) goes silent and is marked `failed`; the rest play on.
 
 ## Several chains: A/B, tracks and sends

@@ -196,7 +196,9 @@ export class AudioSide implements Processor {
         });
         if (slots.join() !== start.setup.slots.join())
             throw new Error("the host's table slots differ between instances");
-        this.audio = new PluginAudio(instance.wasm, start.setup, events, this.output, { audio: true });
+        this.audio = new PluginAudio(instance.wasm, start.setup, events, this.output, { audio: true }, (r) =>
+            this.control.takeAudio(r),
+        );
     }
 
     // While bypassed it isn't processed, so a stop the main side asks for (a restart, removal) is answered here.
