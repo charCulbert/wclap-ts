@@ -14,6 +14,7 @@ import {
     CLAP_EXT_REMOTE_CONTROLS_COMPAT,
     CLAP_EXT_RENDER,
     CLAP_EXT_STATE,
+    CLAP_EXT_STATE_CONTEXT,
     CLAP_EXT_TAIL,
     CLAP_EXT_TIMER_SUPPORT,
     CLAP_EXT_WEBVIEW,
@@ -26,6 +27,9 @@ import {
     CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT,
     CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN,
     CLAP_RENDER_OFFLINE,
+    CLAP_STATE_CONTEXT_FOR_DUPLICATE,
+    CLAP_STATE_CONTEXT_FOR_PRESET,
+    CLAP_STATE_CONTEXT_FOR_PROJECT,
     clap_audio_buffer,
     clap_audio_port_info,
     clap_event_transport,
@@ -45,6 +49,7 @@ import {
     clap_plugin_remote_controls,
     clap_plugin_render,
     clap_plugin_state,
+    clap_plugin_state_context,
     clap_plugin_tail,
     clap_plugin_timer_support,
     clap_plugin_webview,
@@ -79,10 +84,17 @@ import type {
     Ports,
     Preset,
     RemoteControlsPage,
+    StateContext,
 } from "./plugin-types.ts";
 import { encodeUtf8 } from "./utf8.ts";
 import type { Instance } from "./wasm-instance.ts";
 import { asPtr, type Layout, NULL, type Struct } from "./wasm-struct.ts";
+
+const STATE_CONTEXTS = {
+    preset: CLAP_STATE_CONTEXT_FOR_PRESET,
+    duplicate: CLAP_STATE_CONTEXT_FOR_DUPLICATE,
+    project: CLAP_STATE_CONTEXT_FOR_PROJECT,
+};
 
 export class PluginMain {
     readonly instance: Instance;
@@ -606,12 +618,17 @@ export class PluginMain {
         return this.#streams;
     }
 
-    saveState(): Uint8Array {
+    // With a context, a plug-in with state-context hears what the state is for; others get plain state.
+    saveState(context?: StateContext): Uint8Array {
         const state = this.extension(CLAP_EXT_STATE, clap_plugin_state);
         if (!state) throw new Error("the plug-in has no state");
         const { out } = this.#stream();
         this.#streamData.chunks = [];
-        if (!state.call("save", this.plugin.at, out.at)) throw new Error("the plug-in failed to save its state");
+        const withContext = context && this.extension(CLAP_EXT_STATE_CONTEXT, clap_plugin_state_context);
+        const saved = withContext
+            ? withContext.call("save", this.plugin.at, out.at, STATE_CONTEXTS[context])
+            : state.call("save", this.plugin.at, out.at);
+        if (!saved) throw new Error("the plug-in failed to save its state");
         const chunks = this.#streamData.chunks;
         const bytes = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
         let at = 0;
@@ -622,13 +639,17 @@ export class PluginMain {
         return bytes;
     }
 
-    loadState(bytes: Uint8Array): void {
+    loadState(bytes: Uint8Array, context?: StateContext): void {
         const state = this.extension(CLAP_EXT_STATE, clap_plugin_state);
         if (!state) throw new Error("the plug-in has no state");
         const { in: input } = this.#stream();
         this.#streamData.input = bytes;
         this.#streamData.read = 0;
-        if (!state.call("load", this.plugin.at, input.at)) throw new Error("the plug-in failed to load the state");
+        const withContext = context && this.extension(CLAP_EXT_STATE_CONTEXT, clap_plugin_state_context);
+        const loaded = withContext
+            ? withContext.call("load", this.plugin.at, input.at, STATE_CONTEXTS[context])
+            : state.call("load", this.plugin.at, input.at);
+        if (!loaded) throw new Error("the plug-in failed to load the state");
     }
 
     // A plug-in's restart request: after the audio side has stopped processing, deactivate and activate again with

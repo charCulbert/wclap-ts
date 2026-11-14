@@ -4,6 +4,7 @@
 import { EventQueue, MAX_MIDI_BYTES, type Timed } from "../events/event-queue.ts";
 import { Clock } from "../events/live-event-clock.ts";
 import { midiLength } from "../plugin/clap-host-callbacks.ts";
+import type { StateContext } from "../plugin/plugin-types.ts";
 import { canAttach } from "../plugin/wasm-instance.ts";
 import { type Bundle, openBundle } from "../plugin/wclap-bundle.ts";
 import type { FromThread } from "../runtime/thread.ts";
@@ -431,12 +432,12 @@ export class WclapHost extends TypedTarget<HostEvents> {
         return total;
     }
 
-    async saveState(): Promise<Uint8Array[]> {
-        return Promise.all(this.plugins.map((p) => p.saveState()));
+    async saveState(context?: StateContext): Promise<Uint8Array[]> {
+        return Promise.all(this.plugins.map((p) => p.saveState(context)));
     }
 
-    async loadState(states: Uint8Array[]): Promise<void> {
-        await Promise.all(this.plugins.map((p, i) => (states[i] ? p.loadState(states[i]) : undefined)));
+    async loadState(states: Uint8Array[], context?: StateContext): Promise<void> {
+        await Promise.all(this.plugins.map((p, i) => (states[i] ? p.loadState(states[i], context) : undefined)));
     }
 
     connect(destination: AudioNode): AudioNode {

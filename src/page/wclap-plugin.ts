@@ -8,6 +8,7 @@ import type {
     Ports,
     Preset,
     RemoteControlsPage,
+    StateContext,
 } from "../plugin/plugin-types.ts";
 import type { Descriptor } from "../plugin/wasm-instance.ts";
 import type { Bundle } from "../plugin/wclap-bundle.ts";
@@ -189,11 +190,11 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
         return this.call({ call: "note-names" });
     }
 
-    saveState(): Promise<Uint8Array> {
-        return this.call({ call: "save-state" });
+    saveState(context?: StateContext): Promise<Uint8Array> {
+        return this.call({ call: "save-state", context });
     }
-    async loadState(bytes: Uint8Array): Promise<void> {
-        await this.call({ call: "load-state", bytes });
+    async loadState(bytes: Uint8Array, context?: StateContext): Promise<void> {
+        await this.call({ call: "load-state", bytes, context });
         await this.#readValues();
     }
 

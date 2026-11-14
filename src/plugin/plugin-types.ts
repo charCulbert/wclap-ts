@@ -130,6 +130,9 @@ export interface MainOptions {
     offline?: boolean;
 }
 
+// What a saved state is for, for plug-ins with the state-context extension.
+export type StateContext = "preset" | "duplicate" | "project";
+
 export type Change = "latency" | "params" | "note-names" | "ports" | "state";
 
 // A preset as the plug-in describes it; `kind` and `location` say where it lives (inside the plug-in, or a file).

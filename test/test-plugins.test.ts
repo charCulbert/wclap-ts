@@ -550,12 +550,18 @@ test("state-context: nothing loaded yet, then state.save and state.load round-tr
     plugin.destroy();
 });
 
-test("state-context: a preset, a duplicate and a project are saved and loaded with their own context", {
-    todo: "saveState and loadState take no context, so the plug-in sees state.save and state.load (plan: State context)",
-}, async () => {
+test("state-context: a preset, a duplicate and a project are saved and loaded with their own context", async () => {
     const plugin = await load("state-context");
-    plugin.loadState(plugin.saveState());
-    assert.deepEqual(held(plugin.process(16)), [[1, 1]], "a preset");
+    for (const [context, n] of [
+        ["preset", 1],
+        ["duplicate", 2],
+        ["project", 3],
+    ] as const) {
+        plugin.loadState(plugin.saveState(context), context);
+        assert.deepEqual(held(plugin.process(16)), [[n, n]], context);
+    }
+    plugin.loadState(plugin.saveState("preset"), "project");
+    assert.deepEqual(held(plugin.process(16)), [[1, 3]], "saved as a preset, loaded into a project");
     plugin.destroy();
 });
 

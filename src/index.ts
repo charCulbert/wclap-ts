@@ -25,6 +25,7 @@ export type {
     Ports,
     Preset,
     RemoteControlsPage,
+    StateContext,
 } from "./plugin/plugin-types.ts";
 export type { Descriptor } from "./plugin/wasm-instance.ts";
 export type { Stats } from "./worklet/worklet-host.ts";

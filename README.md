@@ -123,16 +123,16 @@ reverb.connect(context.destination);
 
 ## What a plug-in offers
 
-| What             | Calls                                                                                                                                                                       |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Notes            | `noteOn`, `noteOff`, `choke(key, when?, channel?)`, with an optional AudioContext time and channel                                                                          |
-| Parameters       | `params`, `param(id, value, when?)`, `values`                                                                                                                               |
-| Modulation       | `modulate(id, amount, when?, note?)`, for every voice or one note                                                                                                           |
-| Note expressions | `expression(kind, key, value, when?)`: tuning, pressure, and the rest of CLAP's list                                                                                        |
-| State            | `saveState()`, `loadState(bytes)`, `presets()`, `loadPreset(preset)`                                                                                                        |
-| Interface        | `showInterface(element)`, `hideInterface()`                                                                                                                                 |
-| Information      | `latency()`, `tail()`, `valueText(id, value)`, `remoteControls()`, `noteNames()`                                                                                            |
-| MIDI             | `midi(bytes, when?)`; `connectMidi({ sysex? })` on a plug-in from `loadWclap`; on a chain, `midi`, `connectMidi`, `connectMidiOut(output)` and `mapCC(cc, plugin, paramId)` |
+| What             | Calls                                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Notes            | `noteOn`, `noteOff`, `choke(key, when?, channel?)`, with an optional AudioContext time and channel                                                                                    |
+| Parameters       | `params`, `param(id, value, when?)`, `values`                                                                                                                                         |
+| Modulation       | `modulate(id, amount, when?, note?)`, for every voice or one note                                                                                                                     |
+| Note expressions | `expression(kind, key, value, when?)`: tuning, pressure, and the rest of CLAP's list                                                                                                  |
+| State            | `saveState(context?)`, `loadState(bytes, context?)`, `presets()`, `loadPreset(preset)`; context `"preset"`, `"duplicate"` or `"project"`, for plug-ins that save differently for each |
+| Interface        | `showInterface(element)`, `hideInterface()`                                                                                                                                           |
+| Information      | `latency()`, `tail()`, `valueText(id, value)`, `remoteControls()`, `noteNames()`                                                                                                      |
+| MIDI             | `midi(bytes, when?)`; `connectMidi({ sysex? })` on a plug-in from `loadWclap`; on a chain, `midi`, `connectMidi`, `connectMidiOut(output)` and `mapCC(cc, plugin, paramId)`           |
 
 Calls that ask the plug-in something return promises, since the plug-in may be running on another thread.
 

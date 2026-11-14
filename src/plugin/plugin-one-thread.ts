@@ -3,7 +3,7 @@ import type { clap_plugin } from "./clap.generated.ts";
 import type { OutputList, Request } from "./clap-host-callbacks.ts";
 import { PluginAudio } from "./plugin-audio-thread.ts";
 import { PluginMain } from "./plugin-main-thread.ts";
-import type { Event, ParamInfo, Ports, Transport } from "./plugin-types.ts";
+import type { Event, ParamInfo, Ports, StateContext, Transport } from "./plugin-types.ts";
 import type { Instance } from "./wasm-instance.ts";
 import type { Layout, Struct } from "./wasm-struct.ts";
 
@@ -48,11 +48,11 @@ export class Plugin {
     params(): ParamInfo[] {
         return this.main.params();
     }
-    saveState(): Uint8Array {
-        return this.main.saveState();
+    saveState(context?: StateContext): Uint8Array {
+        return this.main.saveState(context);
     }
-    loadState(bytes: Uint8Array): void {
-        this.main.loadState(bytes);
+    loadState(bytes: Uint8Array, context?: StateContext): void {
+        this.main.loadState(bytes, context);
     }
 
     flush(events: readonly Event[], count: number): void {

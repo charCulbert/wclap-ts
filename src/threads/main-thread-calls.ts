@@ -2,13 +2,14 @@
 // threads) and the AudioWorklet between blocks (one thread).
 
 import type { PluginMain } from "../plugin/plugin-main-thread.ts";
-import type { Change, Preset } from "../plugin/plugin-types.ts";
+import type { Change, Preset, StateContext } from "../plugin/plugin-types.ts";
 import type { ThreadStart } from "./plugin-spawned-threads.ts";
 
 // Each call, by name, and what it returns: the page's results are typed from the plug-in's own methods.
 const handlers = {
-    "save-state": (p: PluginMain) => p.saveState(),
-    "load-state": (p: PluginMain, c: { bytes: Uint8Array }) => p.loadState(c.bytes),
+    "save-state": (p: PluginMain, c: { context?: StateContext | undefined }) => p.saveState(c.context),
+    "load-state": (p: PluginMain, c: { bytes: Uint8Array; context?: StateContext | undefined }) =>
+        p.loadState(c.bytes, c.context),
     presets: (p: PluginMain) => p.presets(),
     "load-preset": (p: PluginMain, c: { preset: Preset }) => p.loadPreset(c.preset),
     "open-interface": (p: PluginMain) => p.openInterface(),

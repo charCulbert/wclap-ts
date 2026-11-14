@@ -5,3 +5,4 @@ dist/
 *.log
 .cache/
 site/wclap-sw.js
+.claude/
