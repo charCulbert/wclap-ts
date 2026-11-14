@@ -196,6 +196,9 @@ presets, its interface, its own requests) on a Worker, and its audio on the Audi
 never holds up audio. Other plug-ins run entirely on the audio thread. Check which with `plugin.threads`;
 `plugin.oneThreadReason` says why, and the chain's `onLog` hears it too.
 
+Timers a plug-in registers (CLAP's timer-support) fire where its main-thread work runs: on its Worker, or between
+blocks on the audio thread, so there they keep to the block (about 3 ms) and stop while the AudioContext is suspended.
+
 Two-thread plug-ins can also start their own threads with `pthread_create`; each runs in its own Worker.
 
 To build a plug-in for two threads with the WASI SDK, target `wasm32-wasip1-threads` with `-pthread` and link with:

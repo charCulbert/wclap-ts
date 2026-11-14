@@ -21,6 +21,7 @@ import {
     CLAP_EXT_STATE,
     CLAP_EXT_TAIL,
     CLAP_EXT_THREAD_CHECK,
+    CLAP_EXT_TIMER_SUPPORT,
     CLAP_EXT_WEBVIEW,
     CLAP_NOTE_DIALECT_CLAP,
     CLAP_NOTE_DIALECT_MIDI,
@@ -41,6 +42,7 @@ import {
     clap_host_state,
     clap_host_tail,
     clap_host_thread_check,
+    clap_host_timer_support,
     clap_host_webview,
     clap_input_events,
     clap_output_events,
@@ -153,6 +155,9 @@ export interface Behaviour {
     // The plug-in's interface sent a message to its page, or asked for something of its window.
     webviewSend(bytes: Uint8Array): boolean;
     gui(request: GuiRequest, width?: number, height?: number): boolean;
+    // Timers, on the main side only: a new timer's ID, or -1 to refuse; whether there was such a timer.
+    registerTimer?(periodMs: number): number;
+    unregisterTimer?(id: number): boolean;
 }
 
 // Kept in step with package.json.
@@ -183,6 +188,8 @@ const SLOTS = [
     [clap_host_latency, "changed"],
     [clap_host_note_name, "changed"],
     [clap_host_tail, "changed"],
+    [clap_host_timer_support, "register_timer"],
+    [clap_host_timer_support, "unregister_timer"],
     [clap_input_events, "size"],
     [clap_input_events, "get"],
     [clap_output_events, "try_push"],
@@ -254,6 +261,13 @@ export function installHost(wasm: Wasm, b: Behaviour): number[] {
         "clap_host_note_name.changed": () => b.request("note-names"),
         // The audio side reads the tail on every block the plug-in returns TAIL from.
         "clap_host_tail.changed": () => undefined,
+        "clap_host_timer_support.register_timer": (_host: number, periodMs: number, id: Ptr<"u32">) => {
+            const timer = b.registerTimer?.(periodMs) ?? -1;
+            if (timer < 0) return false;
+            wasm.write("u32", id, timer);
+            return true;
+        },
+        "clap_host_timer_support.unregister_timer": (_host: number, id: number) => b.unregisterTimer?.(id) ?? false,
         "clap_host_gui.resize_hints_changed": () => void b.gui("hints"),
         "clap_host_gui.request_resize": (_host: number, width: number, height: number) =>
             b.gui("resize", width, height),
@@ -320,6 +334,7 @@ export function writeHost(instance: Instance, slots: number[]): HostStructs {
         [CLAP_EXT_LATENCY, fill(clap_host_latency).at],
         [CLAP_EXT_NOTE_NAME, fill(clap_host_note_name).at],
         [CLAP_EXT_TAIL, fill(clap_host_tail).at],
+        [CLAP_EXT_TIMER_SUPPORT, fill(clap_host_timer_support).at],
     ]);
     return {
         host: host.at,

@@ -13,6 +13,7 @@ import {
     CLAP_EXT_REMOTE_CONTROLS_COMPAT,
     CLAP_EXT_STATE,
     CLAP_EXT_TAIL,
+    CLAP_EXT_TIMER_SUPPORT,
     CLAP_EXT_WEBVIEW,
     CLAP_INVALID_ID,
     CLAP_PRESET_DISCOVERY_FACTORY_ID,
@@ -35,6 +36,7 @@ import {
     clap_plugin_remote_controls,
     clap_plugin_state,
     clap_plugin_tail,
+    clap_plugin_timer_support,
     clap_plugin_webview,
     clap_preset_discovery_factory,
     clap_preset_discovery_indexer,
@@ -86,6 +88,9 @@ export class PluginMain {
     #activation = { sampleRate: 0, maxFrames: 0 };
     #extensions = new Map<string, number>();
     readonly #options: MainOptions;
+    // The plug-in's timers by ID: its period and when it's next due, in Date.now() milliseconds.
+    readonly #timers = new Map<number, { period: number; due: number }>();
+    #nextTimer = 0;
 
     static create(instance: Instance, id: string, options: MainOptions = {}): PluginMain {
         return new PluginMain(instance, id, options);
@@ -112,6 +117,13 @@ export class PluginMain {
                 return !!options.onInterfaceMessage;
             },
             gui: (request, width, height) => options.onInterfaceRequest?.(request, width, height) ?? false,
+            registerTimer: (periodMs) => {
+                const id = this.#nextTimer++;
+                const period = Math.max(1, periodMs);
+                this.#timers.set(id, { period, due: Date.now() + period });
+                return id;
+            },
+            unregisterTimer: (id) => this.#timers.delete(id),
         };
         this.#slots = installHost(instance.wasm, behaviour);
         this.#host = writeHost(instance, this.#slots);
@@ -500,6 +512,29 @@ export class PluginMain {
         if (this.requests.delete("params-rescan")) this.#options.onChange?.("params");
         if (this.requests.delete("note-names")) this.#options.onChange?.("note-names");
         if (this.requests.delete("state-dirty")) this.#options.onChange?.("state");
+        this.#runTimers();
+    }
+
+    // Milliseconds until the plug-in's next timer is due (0 if one is), or Infinity if it has none: idle must run
+    // by then for the timer to keep its period.
+    timerDue(): number {
+        let due = Number.POSITIVE_INFINITY;
+        for (const t of this.#timers.values()) due = Math.min(due, t.due);
+        return Math.max(0, due - Date.now());
+    }
+
+    // Each timer that's due, once; one that fell more than a period behind (a suspended context) skips ahead
+    // rather than firing in a burst.
+    #runTimers(): void {
+        if (!this.#timers.size) return;
+        const ext = this.extension(CLAP_EXT_TIMER_SUPPORT, clap_plugin_timer_support);
+        const now = Date.now();
+        for (const [id, t] of this.#timers) {
+            if (t.due > now) continue;
+            t.due += t.period;
+            if (t.due <= now) t.due = now + t.period;
+            ext?.call("on_timer", this.plugin.at, id);
+        }
     }
 
     #streams: { out: Struct<typeof clap_ostream>; in: Struct<typeof clap_istream> } | undefined;
@@ -570,6 +605,7 @@ export class PluginMain {
     destroy(): void {
         if (this.#active) this.plugin.call("deactivate", this.plugin.at);
         this.#active = false;
+        this.#timers.clear();
         this.plugin.call("destroy", this.plugin.at);
     }
 }

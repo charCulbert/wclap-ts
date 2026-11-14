@@ -119,11 +119,11 @@ export class MainThread {
         return this.control.state === State.failed;
     }
 
-    // Serves the plug-in's requests until stop(): main-thread callbacks, and restarts.
+    // Serves the plug-in's requests until stop(): main-thread callbacks, restarts, and timers (waking for each).
     serve(): Promise<void> {
         this.#serving ??= (async () => {
             while (!this.#stopped && !this.#failed()) {
-                await this.control.waitForRequest(250);
+                await this.control.waitForRequest(Math.min(250, this.plugin.timerDue()));
                 for (const request of this.control.take()) this.plugin.requests.add(request);
                 if (this.#stopped || this.#failed()) break;
                 if (this.plugin.requests.has("restart") && (await this.#pause(1000))) {
