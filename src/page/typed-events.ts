@@ -1,4 +1,5 @@
 import type { Change } from "../plugin/plugin-types.ts";
+import type { WclapPlugin } from "./wclap-plugin.ts";
 
 // The events each class sends, so addEventListener types `detail`.
 export interface PluginEvents {
@@ -9,11 +10,15 @@ export interface PluginEvents {
     change: CustomEvent<{ what: Change }>;
     // The plug-in suggests showing this remote-controls page (RemoteControlsPage.id).
     "suggest-page": CustomEvent<{ pageId: number }>;
+    // It crashed (a WebAssembly trap) and won't be called again.
+    failed: CustomEvent<{ message: string }>;
 }
 export interface HostEvents {
     noteout: CustomEvent<NoteOut>;
     midiout: CustomEvent<MidiOut>;
     latencychange: Event;
+    // A plug-in crashed (a WebAssembly trap) and won't be called again.
+    failed: CustomEvent<{ plugin: WclapPlugin; message: string }>;
     // What your arrangement posted (Topology.post).
     message: CustomEvent<unknown>;
 }

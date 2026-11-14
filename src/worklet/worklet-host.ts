@@ -35,6 +35,8 @@ export interface ProcessorOptions {
     maxFrames: number;
     // Whatever the page passed for the arrangement (HostOptions.topology).
     topology?: unknown;
+    // What a crashed plug-in outputs (ChainOptions.onFailure).
+    onFailure?: "pass" | "silence";
 }
 
 // Makes the arrangement, once, when the node is created.
@@ -65,6 +67,7 @@ export type ToProcessor =
     | { type: "remove"; id: number }
     | { type: "move"; id: number; index: number }
     | { type: "enable"; id: number; on: boolean }
+    | { type: "reset"; id: number }
     | { type: "transport"; anchor: TransportAnchor }
     | { type: "call"; id: number; callId: number; call: MainCall }
     | { type: "message"; data: unknown }
@@ -141,6 +144,7 @@ class HostProcessor extends Base {
         this.#maxFrames = o.maxFrames;
         this.#scheduler = new Scheduler(new EventQueue(o.queue));
         this.#runner = new Runner(this.#transport);
+        this.#runner.failure = o.onFailure ?? "pass";
         this.#runner.onFailure = (id, error) => this.#send({ type: "failed", id, message: describe(error) });
         const back = new EventQueue(o.back);
         const notesOut = (blockStart: number, notes: readonly Event[], count: number) => {
@@ -222,6 +226,9 @@ class HostProcessor extends Base {
                     this.#chain.setEnabled?.(m.id, m.on);
                     return;
                 }
+                case "reset":
+                    this.#slots.get(m.id)?.processor.reset?.();
+                    return;
                 case "transport":
                     // In frame order: changes are sent as they're made, each at or after the last.
                     this.#clock.push(m.anchor);

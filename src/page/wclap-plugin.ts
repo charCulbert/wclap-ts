@@ -218,11 +218,12 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
     }
     async loadState(bytes: Uint8Array, context?: StateContext): Promise<void> {
         await this.call({ call: "load-state", bytes, context });
-        await this.#readValues();
+        await this.readValues();
     }
 
-    // After a state or preset load, every parameter as the plug-in now has it; a "value" event for each change.
-    async #readValues(): Promise<void> {
+    // Every parameter as the plug-in has it now, with a "value" event for each change: after a state or preset load,
+    // and for a plug-in that changes its parameters without saying so, as often as you poll.
+    async readValues(): Promise<void> {
         const values = await this.call({ call: "param-values" });
         this.#loadedAt = Math.round(this.host.context.currentTime * this.host.context.sampleRate);
         for (const [id, value] of values) {
@@ -231,12 +232,20 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
             this.dispatchEvent(new CustomEvent("value", { detail: { id, value } }));
         }
     }
+    // Clears its sound (voices, delay lines, filters) on the audio thread before its next block: CLAP's reset.
+    reset(): void {
+        this.host.reset(this);
+    }
+    // Deactivates and activates it again between blocks, as if it had asked for a restart.
+    async restart(): Promise<void> {
+        await this.call({ call: "restart" });
+    }
     presets(): Promise<Preset[]> {
         return this.call({ call: "presets" });
     }
     async loadPreset(preset: Preset): Promise<void> {
         await this.call({ call: "load-preset", preset });
-        await this.#readValues();
+        await this.readValues();
     }
     latency(): Promise<number> {
         return this.call({ call: "latency" });

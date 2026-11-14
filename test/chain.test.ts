@@ -488,3 +488,28 @@ test("a sequencer sends no notes while the transport is stopped", async () => {
     assert.ok((await notes(true)) > 0);
     assert.equal(await notes(false), 0);
 });
+
+test("a crashed plug-in passes its input on when its ports match, and is silent otherwise or when asked", () => {
+    const input = new Float32Array(128).fill(0.25);
+    const crash: Processor = {
+        output: new OutputList(),
+        process: () => {
+            throw new Error("unreachable");
+        },
+    };
+    const run = (ports: { inputs: number[]; outputs: number[] }, failure?: "pass" | "silence") => {
+        const chain = new Chain(new Scheduler(EventQueue.create()), 48000);
+        if (failure) chain.runner.failure = failure;
+        const failed: number[] = [];
+        chain.onFailure = (id) => failed.push(id);
+        chain.add({ ...slotOf(5, crash), ports });
+        const out = stereo();
+        chain.render(0, 128, [[input, input]], out);
+        const crashed = out[0]?.[0]?.[0];
+        chain.render(128, 128, [[input, input]], out);
+        return { failed, crashed, after: out[0]?.[0]?.[0] };
+    };
+    assert.deepEqual(run({ inputs: [2], outputs: [2] }), { failed: [5], crashed: 0.25, after: 0.25 });
+    assert.deepEqual(run({ inputs: [], outputs: [2] }), { failed: [5], crashed: 0, after: 0 }, "an instrument");
+    assert.deepEqual(run({ inputs: [2], outputs: [2] }, "silence"), { failed: [5], crashed: 0, after: 0 });
+});

@@ -27,6 +27,7 @@ const handlers = {
     "note-names": (p: PluginMain) => p.noteNames(),
     "voice-info": (p: PluginMain) => p.voiceInfo(),
     "param-values": (p: PluginMain) => p.paramValues(),
+    restart: (p: PluginMain) => p.requestRestart(),
     "get-resource": (p: PluginMain, c: { path: string }) => p.getResource(c.path),
     "resize-interface": (p: PluginMain, c: { width: number; height: number }) => p.resizeInterface(c.width, c.height),
 };

@@ -148,10 +148,7 @@ export class PluginMain {
             events: this.events,
             output: this.output,
             extensions,
-            request: (request) => {
-                this.requests.add(request);
-                options.onRequest?.(request);
-            },
+            request: (request) => this.#request(request),
             log,
             isAudioThread: () => this.thread.audio,
             isMainThread: () => !this.thread.audio,
@@ -309,6 +306,16 @@ export class PluginMain {
             });
         }
         return names;
+    }
+
+    #request(request: Request): void {
+        this.requests.add(request);
+        this.#options.onRequest?.(request);
+    }
+
+    // A restart from the page, as if the plug-in had asked for one: deactivated and activated again between blocks.
+    requestRestart(): void {
+        this.#request("restart");
     }
 
     // The voice info as last read: once active, and again each time the plug-in says it changed. Null without the

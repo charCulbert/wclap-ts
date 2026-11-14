@@ -44,6 +44,9 @@ export interface ChainOptions {
     maxMemoryMB?: number;
     onLog?: (message: string, severity: LogSeverity, plugin?: WclapPlugin) => void;
     onError?: (message: string, plugin?: WclapPlugin) => void;
+    // What a plug-in that crashed (a WebAssembly trap) outputs from then on: its input passed through ("pass", when
+    // its inputs and outputs match; silence otherwise) or silence. "pass" by default.
+    onFailure?: "pass" | "silence";
     onStats?: (stats: Stats) => void;
 }
 
@@ -132,6 +135,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
             back: back.buffer,
             maxFrames: 128,
             topology: options.topology,
+            ...(options.onFailure ? { onFailure: options.onFailure } : {}),
         };
         this.#drain = setInterval(() => {
             this.#sendRetries();
@@ -172,6 +176,10 @@ export class WclapHost extends TypedTarget<HostEvents> {
                 plugin?.markFailed();
                 this.latencyChanged();
                 (options.onError ?? console.error)(m.message, plugin);
+                if (plugin) {
+                    plugin.dispatchEvent(new CustomEvent("failed", { detail: { message: m.message } }));
+                    this.dispatchEvent(new CustomEvent("failed", { detail: { plugin, message: m.message } }));
+                }
             } else if (m.type === "error") (options.onError ?? console.error)(m.message, plugins.get(m.id ?? -1));
         };
         this.clock = new Clock(context, options.lead ?? 256 / context.sampleRate);
@@ -423,6 +431,11 @@ export class WclapHost extends TypedTarget<HostEvents> {
     setEnabled(plugin: WclapPlugin, on: boolean): void {
         this.#audio.post({ type: "enable", id: plugin.id, on });
         this.latencyChanged();
+    }
+
+    /** @internal WclapPlugin.reset. */
+    reset(plugin: WclapPlugin): void {
+        this.#audio.post({ type: "reset", id: plugin.id });
     }
 
     /** @internal */

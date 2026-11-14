@@ -35,8 +35,11 @@ const MAX_FRAMES = 128;
 
 export class Runner {
     readonly transport: Transport;
-    // A plug-in trapped: it's marked failed and silent from then on.
+    // A plug-in trapped: it's marked failed and not called again.
     onFailure: (id: number, error: unknown) => void = () => undefined;
+    // What a failed plug-in outputs: its input passed through, when its ports match, or silence.
+    failure: "pass" | "silence" = "pass";
+    readonly #silence = new Map<number, Audio>();
     // A plug-in changed its own parameters, or began or ended a gesture: those events are in `out`.
     onParams: (id: number, out: OutputList) => void = () => undefined;
     // Whether the last run processed the plug-in, so its output notes in `processor.output` are this block's.
@@ -63,6 +66,7 @@ export class Runner {
     }
 
     remove(id: number): void {
+        this.#silence.delete(id);
         this.#held.delete(id);
         this.#release.delete(id);
         this.#fade.delete(id);
@@ -88,7 +92,7 @@ export class Runner {
         this.#ran.add(slot.id);
         const fade = this.#fade.get(slot.id);
         if (fade) this.#fade.delete(slot.id);
-        if (slot.failed) return null;
+        if (slot.failed) return this.#failed(slot);
         const releases = this.#release.has(slot.id) ? this.#takeReleases(slot.id) : 0;
         const p = slot.processor;
         try {
@@ -134,8 +138,21 @@ export class Runner {
         } catch (error) {
             slot.failed = true;
             this.onFailure(slot.id, error);
-            return null;
+            return this.#failed(slot);
         }
+    }
+
+    // null passes the input on; otherwise silence in the plug-in's output layout, made once.
+    #failed(slot: Slot): Audio | null {
+        const { inputs, outputs } = slot.ports;
+        if (outputs.length === 0 || (this.failure === "pass" && inputs.join() === outputs.join())) return null;
+        let silence = this.#silence.get(slot.id);
+        if (!silence) {
+            const zeros = new Float32Array(MAX_FRAMES);
+            silence = outputs.map((channels) => Array.from({ length: channels }, () => zeros));
+            this.#silence.set(slot.id, silence);
+        }
+        return silence;
     }
 
     // The host's side of each block: before it, forget who ran; after it, every plug-in the arrangement didn't run
