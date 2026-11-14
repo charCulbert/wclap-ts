@@ -143,8 +143,8 @@ export class Chain implements Topology {
         }
     }
 
-    // The plug-in's own notes go on to the next one with the note IDs it gave them (its parameter changes went to
-    // the page). Its NOTE_ENDs stop here: they answer the note-ons it was sent, and the runner has used them.
+    // The plug-in's own notes and MIDI go on to the next one, the notes with the note IDs it gave them (its parameter
+    // changes went to the page). Its NOTE_ENDs stop here: they answer the note-ons it was sent, and the runner has used them.
     #passOutput(out: OutputList): void {
         this.#passingCount = 0;
         for (let k = 0; k < out.count; k++) {
@@ -153,7 +153,7 @@ export class Chain implements Topology {
         }
     }
 
-    // The notes leaving the chain, after note-offs for those sent before its end changed.
+    // The notes and MIDI leaving the chain, after note-offs for notes sent before its end changed.
     #sendOut(blockStart: number): void {
         const list = this.#out;
         let n = 0;
@@ -167,6 +167,10 @@ export class Chain implements Topology {
         }
         for (let k = 0; k < this.#passingCount && n < MAX_EVENTS; k++) {
             const e = this.#passing[k];
+            if (e?.type === "midi") {
+                list[n++] = e;
+                continue;
+            }
             if (e?.type !== "note-on" && e?.type !== "note-off" && e?.type !== "note-choke") continue;
             const channel = e.channel ?? 0;
             if (e.type !== "note-choke" && channel >= 0 && e.key >= 0) {
@@ -228,9 +232,15 @@ export class Chain implements Topology {
     }
 }
 
-// What goes on from one plug-in to the next: notes and their expressions.
+// What goes on from one plug-in to the next: notes, their expressions, and MIDI.
 function passes(e: Event): boolean {
-    return e.type === "note-on" || e.type === "note-off" || e.type === "note-choke" || e.type === "expression";
+    return (
+        e.type === "note-on" ||
+        e.type === "note-off" ||
+        e.type === "note-choke" ||
+        e.type === "expression" ||
+        e.type === "midi"
+    );
 }
 
 // Port by port; a mono port feeds every channel of its output, and outputs with no source are silent.

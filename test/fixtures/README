@@ -20,6 +20,11 @@ Spawner.wasm
     spawner/ here (MIT), built by spawner/build.sh.
     Starts its own thread with pthread_create.
 
+MidiEcho.wasm
+    midi-echo/ here (MIT), built by midi-echo/build.sh.
+    Sends every note and MIDI event straight back out, and marks each one's type and flags in its output. Two
+    plug-ins: one takes notes in the MIDI dialect, one only in MIDI 2.
+
 Not in the repo: `npm run fixtures` fetches these into .cache/, pinned by release or commit and sha256, and prints
 each one's licence and source (test/fetch-fixture.ts lists them). A test fetches any it needs that's missing.
     - gui-lifecycle, process-lifecycle, probe and note-ids, from github.com/charCulbert/wclap-test-plugins v0.3.0 (MIT).

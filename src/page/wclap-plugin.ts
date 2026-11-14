@@ -147,11 +147,17 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
         return this.host.schedule({ type: "note-choke", key, velocity: 0, channel }, when, this.id);
     }
 
+    // One raw MIDI message (sysex included) to this plug-in, at `when` like noteOn; see WclapHost.midi.
+    midi(bytes: ArrayLike<number>, when?: number): boolean {
+        return this.host.sendMidi(bytes, when, this.id);
+    }
+
     param(id: number, value: number, when?: number): boolean {
         const rate = this.host.context.sampleRate;
         const frame = when === undefined ? this.host.clock.frameAt(performance.now()) : Math.round(when * rate);
         this.#setAt.set(id, frame);
-        const scheduled = this.host.schedule({ type: "param", id, value }, frame / rate, this.id);
+        const live = when === undefined;
+        const scheduled = this.host.schedule({ type: "param", id, value, live }, frame / rate, this.id);
         // Followers (panels, knobs) hear of it when it takes effect, not when it was scheduled.
         const delay = when === undefined ? 0 : Math.max(0, (when - this.host.context.currentTime) * 1000);
         const apply = () => {
@@ -245,8 +251,8 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
         return this.host;
     }
     // Every Web MIDI input plays this plug-in (from loadWclap; a chain's plug-ins are played through the chain).
-    connectMidi(): Promise<() => void> {
-        return this.#own().connectMidi();
+    connectMidi(options: { sysex?: boolean } = {}): Promise<() => void> {
+        return this.#own().connectMidi(options);
     }
 
     // Removes the plug-in from its chain; a plug-in from loadWclap ends its chain with it.

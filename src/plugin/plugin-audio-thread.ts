@@ -2,6 +2,10 @@
 // events and transport into the plug-in's memory.
 import {
     CLAP_CORE_EVENT_SPACE_ID,
+    CLAP_EVENT_IS_LIVE,
+    CLAP_EVENT_MIDI,
+    CLAP_EVENT_MIDI_SYSEX,
+    CLAP_EVENT_MIDI2,
     CLAP_EVENT_NOTE_CHOKE,
     CLAP_EVENT_NOTE_EXPRESSION,
     CLAP_EVENT_NOTE_OFF,
@@ -10,6 +14,8 @@ import {
     CLAP_EVENT_PARAM_GESTURE_END,
     CLAP_EVENT_PARAM_MOD,
     CLAP_EVENT_PARAM_VALUE,
+    CLAP_NOTE_DIALECT_CLAP,
+    CLAP_NOTE_DIALECT_MIDI2,
     CLAP_PROCESS_ERROR,
     CLAP_TRANSPORT_HAS_BEATS_TIMELINE,
     CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
@@ -17,6 +23,9 @@ import {
     CLAP_TRANSPORT_HAS_TIME_SIGNATURE,
     CLAP_TRANSPORT_IS_PLAYING,
     clap_event_header,
+    clap_event_midi,
+    clap_event_midi_sysex,
+    clap_event_midi2,
     clap_event_note,
     clap_event_note_expression,
     clap_event_param_gesture,
@@ -27,7 +36,7 @@ import {
     clap_plugin_tail,
     clap_process,
 } from "./clap.generated.ts";
-import { EVENT_SIZE, type EventList, MAX_EVENTS, type OutputList } from "./clap-host-callbacks.ts";
+import { EVENT_SIZE, type EventList, MAX_EVENTS, MIDI_AREA, type OutputList } from "./clap-host-callbacks.ts";
 import type { AudioSetup, Event, Transport } from "./plugin-types.ts";
 import { ProcessStatus } from "./process-status.ts";
 import { asPtr, NULL, type Ptr, type Struct, type Wasm } from "./wasm-struct.ts";
@@ -57,6 +66,8 @@ export class PluginAudio {
     readonly output: OutputList;
     #processing = false;
     #steadyTime = 0;
+    // Bytes of this block's MIDI area in use.
+    #midiUsed = 0;
     #skipped = false;
 
     // `events`, `output` and `thread` are what this thread's host functions read and write; `take` reads the
@@ -108,7 +119,7 @@ export class PluginAudio {
         let n = 0;
         for (let i = 0; i < count && n < MAX_EVENTS; i++) {
             const event = events[i];
-            if (event?.type === "param" || event?.type === "param-mod") this.#writeEvent(event, n++);
+            if (event?.type === "param" || event?.type === "param-mod") n = this.#writeEvent(event, n);
         }
         this.#events.count = n;
         this.#thread.audio = true;
@@ -148,12 +159,14 @@ export class PluginAudio {
         const max = this.setup.maxFrames;
         if (frames > max) throw new Error(`${frames} frames is more than the ${max} activated`);
         if (count > MAX_EVENTS) throw new Error(`more than ${MAX_EVENTS} events in one block`);
+        this.#midiUsed = 0;
+        let written = 0;
         for (let i = 0; i < count; i++) {
             const event = events[i];
             if (!event) break;
             if (!(event.at >= 0 && event.at < frames)) throw new Error(`event at frame ${event.at}, outside the block`);
             if (i > 0 && event.at < (events[i - 1]?.at ?? 0)) throw new Error("events are not in time order");
-            this.#writeEvent(event, i);
+            written = this.#writeEvent(event, written);
         }
         const views = this.#viewsFor(frames);
         for (let p = 0; p < views.inputs.length; p++) {
@@ -184,7 +197,7 @@ export class PluginAudio {
         this.#process.set("steady_time", transport?.frame ?? this.#steadyTime);
         this.#process.set("frames_count", frames);
         this.#process.set("transport", transport ? this.#writeTransport(transport) : NULL);
-        this.#events.count = count;
+        this.#events.count = written;
         this.output.count = 0;
         this.#thread.audio = true;
         let outputs: Float32Array[][];
@@ -261,8 +274,11 @@ export class PluginAudio {
         return this.#views;
     }
 
-    #writeEvent(event: Event, index: number): void {
+    // Writes the event at `index` (or several, or none: see #writeNote and #writeMidi); returns the next index.
+    #writeEvent(event: Event, index: number): number {
+        if (index >= MAX_EVENTS) return index;
         const at = this.setup.events + index * EVENT_SIZE;
+        const flags = event.live ? CLAP_EVENT_IS_LIVE : 0;
         if (event.type === "param" || event.type === "param-mod") {
             // A modulation has the same layout, with its amount where the value is.
             const e = this.#param.moveTo(asPtr(at));
@@ -276,11 +292,11 @@ export class PluginAudio {
             e.set("key", perNote && event.type === "param-mod" ? (event.key ?? -1) : -1);
             e.set("value", event.value);
             const type = event.type === "param" ? CLAP_EVENT_PARAM_VALUE : CLAP_EVENT_PARAM_MOD;
-            this.#writeHeader(at, clap_event_param_value.size, event.at, type);
+            this.#writeHeader(at, clap_event_param_value.size, event.at, type, flags);
         } else if (event.type === "gesture-begin" || event.type === "gesture-end") {
             this.wasm.write("u32", at + clap_event_header.size, event.id);
             const type = event.type === "gesture-begin" ? CLAP_EVENT_PARAM_GESTURE_BEGIN : CLAP_EVENT_PARAM_GESTURE_END;
-            this.#writeHeader(at, clap_event_param_gesture.size, event.at, type);
+            this.#writeHeader(at, clap_event_param_gesture.size, event.at, type, flags);
         } else if (event.type === "expression") {
             const e = this.#expression.moveTo(asPtr(at));
             e.set("expression_id", event.expression);
@@ -289,12 +305,26 @@ export class PluginAudio {
             e.set("channel", event.channel ?? -1);
             e.set("key", event.key);
             e.set("value", event.value);
-            this.#writeHeader(at, clap_event_note_expression.size, event.at, CLAP_EVENT_NOTE_EXPRESSION);
-        } else if (event.type === "note-on" || event.type === "note-off" || event.type === "note-choke") {
+            this.#writeHeader(at, clap_event_note_expression.size, event.at, CLAP_EVENT_NOTE_EXPRESSION, flags);
+        } else if (event.type === "note-on" || event.type === "note-off" || event.type === "note-choke")
+            return this.#writeNote(event, index, flags);
+        else if (event.type === "midi") return this.#writeMidi(event, index, flags);
+        else return index;
+        return index + 1;
+    }
+
+    // In the plug-in's note dialect. MIDI can't say a choke, or a note-off for any key or channel: those go as CLAP
+    // notes if the plug-in takes them, otherwise as a note-off for the key on each channel, or All Notes Off.
+    #writeNote(event: Event & { type: "note-on" | "note-off" | "note-choke" }, index: number, flags: number): number {
+        const channel = event.channel ?? 0;
+        const { dialect, dialects } = this.setup;
+        const midi = event.type !== "note-choke" && channel >= 0 && event.key >= 0;
+        if (dialect === CLAP_NOTE_DIALECT_CLAP || (!midi && dialects & CLAP_NOTE_DIALECT_CLAP)) {
+            const at = this.setup.events + index * EVENT_SIZE;
             const e = this.#note.moveTo(asPtr(at));
             e.set("note_id", event.noteId ?? -1);
             e.set("port_index", 0);
-            e.set("channel", event.channel ?? 0);
+            e.set("channel", channel);
             e.set("key", event.key);
             e.set("velocity", event.velocity);
             const type =
@@ -303,17 +333,76 @@ export class PluginAudio {
                     : event.type === "note-off"
                       ? CLAP_EVENT_NOTE_OFF
                       : CLAP_EVENT_NOTE_CHOKE;
-            this.#writeHeader(at, clap_event_note.size, event.at, type);
+            this.#writeHeader(at, clap_event_note.size, event.at, type, flags);
+            return index + 1;
         }
+        const velocity = Math.min(127, Math.max(0, Math.round(event.velocity * 127)));
+        if (midi && event.type === "note-on")
+            return this.#writeShort(index, event.at, flags, 0x90 | channel, event.key, Math.max(1, velocity));
+        if (midi) return this.#writeShort(index, event.at, flags, 0x80 | channel, event.key, velocity);
+        let n = index;
+        for (let c = 0; c < 16 && n < MAX_EVENTS; c++) {
+            if (channel >= 0 && c !== channel) continue;
+            if (event.key >= 0) n = this.#writeShort(n, event.at, flags, 0x80 | c, event.key, 0);
+            else n = this.#writeShort(n, event.at, flags, 0xb0 | c, 123, 0);
+        }
+        return n;
+    }
+
+    // A sysex goes as CLAP_EVENT_MIDI_SYSEX, its bytes copied to the block's MIDI area in the plug-in's memory (one
+    // that doesn't fit is left out); any other message of up to three bytes as a short message.
+    #writeMidi(event: Event & { type: "midi" }, index: number, flags: number): number {
+        const { data, offset, size } = event;
+        if (data[offset] === 0xf0) {
+            if (this.#midiUsed + size > MIDI_AREA) return index;
+            const buffer = this.setup.midi + this.#midiUsed;
+            const bytes = this.wasm.bytes;
+            for (let i = 0; i < size; i++) bytes[buffer + i] = data[offset + i] ?? 0;
+            this.#midiUsed += size;
+            const at = this.setup.events + index * EVENT_SIZE;
+            this.wasm.write("u16", at + 16, 0);
+            this.wasm.write("u32", at + 20, buffer);
+            this.wasm.write("u32", at + 24, size);
+            this.#writeHeader(at, clap_event_midi_sysex.size, event.at, CLAP_EVENT_MIDI_SYSEX, flags);
+            return index + 1;
+        }
+        if (size > 3) return index;
+        const b0 = data[offset] ?? 0;
+        const b1 = size > 1 ? (data[offset + 1] ?? 0) : 0;
+        const b2 = size > 2 ? (data[offset + 2] ?? 0) : 0;
+        return this.#writeShort(index, event.at, flags, b0, b1, b2);
+    }
+
+    // A MIDI 1 message of up to three bytes: CLAP_EVENT_MIDI, or for a plug-in that takes notes as MIDI 2,
+    // CLAP_EVENT_MIDI2 with the message in one packet (UMP message type 2, group 0).
+    #writeShort(index: number, time: number, flags: number, b0: number, b1: number, b2: number): number {
+        if (index >= MAX_EVENTS) return index;
+        const at = this.setup.events + index * EVENT_SIZE;
+        if (this.setup.dialect === CLAP_NOTE_DIALECT_MIDI2) {
+            this.wasm.write("u16", at + 16, 0);
+            this.wasm.write("u32", at + 20, ((0x20 << 24) | (b0 << 16) | (b1 << 8) | b2) >>> 0);
+            this.wasm.write("u32", at + 24, 0);
+            this.wasm.write("u32", at + 28, 0);
+            this.wasm.write("u32", at + 32, 0);
+            this.#writeHeader(at, clap_event_midi2.size, time, CLAP_EVENT_MIDI2, flags);
+        } else {
+            const bytes = this.wasm.bytes;
+            this.wasm.write("u16", at + 16, 0);
+            bytes[at + 18] = b0;
+            bytes[at + 19] = b1;
+            bytes[at + 20] = b2;
+            this.#writeHeader(at, clap_event_midi.size, time, CLAP_EVENT_MIDI, flags);
+        }
+        return index + 1;
     }
 
     // Every event starts with its header.
-    #writeHeader(at: number, size: number, time: number, type: number): void {
+    #writeHeader(at: number, size: number, time: number, type: number, flags: number): void {
         const header = this.#header.moveTo(asPtr(at));
         header.set("size", size);
         header.set("time", time);
         header.set("space_id", CLAP_CORE_EVENT_SPACE_ID);
         header.set("type", type);
-        header.set("flags", 0);
+        header.set("flags", flags);
     }
 }

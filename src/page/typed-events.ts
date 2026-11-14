@@ -10,6 +10,7 @@ export interface PluginEvents {
 }
 export interface HostEvents {
     noteout: CustomEvent<NoteOut>;
+    midiout: CustomEvent<MidiOut>;
     latencychange: Event;
     // What your arrangement posted (Topology.post).
     message: CustomEvent<unknown>;
@@ -53,5 +54,11 @@ export interface NoteOut {
     key: number;
     velocity: number;
     channel: number;
+    time: number;
+}
+
+// A MIDI message leaving the chain (notes included), one message's bytes; `time` is AudioContext time.
+export interface MidiOut {
+    data: Uint8Array;
     time: number;
 }

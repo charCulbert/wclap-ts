@@ -87,8 +87,8 @@ await chain.connectMidi(); // every MIDI input plays the chain
 ```
 
 All plug-ins in a chain run in one AudioWorkletNode, in order, within each block. Audio goes from each plug-in to
-the next. Notes a plug-in sends out go to the next plug-in in the same block, with the note IDs it gave them, and the
-last plug-in's notes come out of the chain (`chain.connectMidiOut(output)`).
+the next. Notes and MIDI a plug-in sends out go to the next plug-in in the same block, the notes with the note IDs it
+gave them, and the last plug-in's come out of the chain (`midiout`, `chain.connectMidiOut(output)`).
 
 A plug-in that says it has nothing to do (CLAP's process status) isn't called again until it does: until an event is
 due, its input has sound, or it asks to be processed. One that returns "continue if not quiet" stops after a silent
@@ -123,16 +123,16 @@ reverb.connect(context.destination);
 
 ## What a plug-in offers
 
-| What             | Calls                                                                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Notes            | `noteOn`, `noteOff`, `choke(key, when?, channel?)`, with an optional AudioContext time and channel                                    |
-| Parameters       | `params`, `param(id, value, when?)`, `values`                                                                                         |
-| Modulation       | `modulate(id, amount, when?, note?)`, for every voice or one note                                                                     |
-| Note expressions | `expression(kind, key, value, when?)`: tuning, pressure, and the rest of CLAP's list                                                  |
-| State            | `saveState()`, `loadState(bytes)`, `presets()`, `loadPreset(preset)`                                                                  |
-| Interface        | `showInterface(element)`, `hideInterface()`                                                                                           |
-| Information      | `latency()`, `tail()`, `valueText(id, value)`, `remoteControls()`, `noteNames()`                                                      |
-| MIDI             | `connectMidi()` on a plug-in from `loadWclap`; on a chain, `connectMidi()`, `connectMidiOut(output)` and `mapCC(cc, plugin, paramId)` |
+| What             | Calls                                                                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Notes            | `noteOn`, `noteOff`, `choke(key, when?, channel?)`, with an optional AudioContext time and channel                                                                          |
+| Parameters       | `params`, `param(id, value, when?)`, `values`                                                                                                                               |
+| Modulation       | `modulate(id, amount, when?, note?)`, for every voice or one note                                                                                                           |
+| Note expressions | `expression(kind, key, value, when?)`: tuning, pressure, and the rest of CLAP's list                                                                                        |
+| State            | `saveState()`, `loadState(bytes)`, `presets()`, `loadPreset(preset)`                                                                                                        |
+| Interface        | `showInterface(element)`, `hideInterface()`                                                                                                                                 |
+| Information      | `latency()`, `tail()`, `valueText(id, value)`, `remoteControls()`, `noteNames()`                                                                                            |
+| MIDI             | `midi(bytes, when?)`; `connectMidi({ sysex? })` on a plug-in from `loadWclap`; on a chain, `midi`, `connectMidi`, `connectMidiOut(output)` and `mapCC(cc, plugin, paramId)` |
 
 Calls that ask the plug-in something return promises, since the plug-in may be running on another thread.
 
@@ -144,6 +144,7 @@ Both plug-ins and chains are `EventTarget`s:
 | `gesture`       | plug-in | `{ id, begin }`: its interface started or finished a drag, one undo step                                                                                                           |
 | `change`        | plug-in | `{ what }`: `"latency"`, `"params"` (reloaded into `params`), `"note-names"`, `"state"` (unsaved changes), or `"ports"` (the plug-in changed its ports; load it again to use them) |
 | `noteout`       | chain   | `{ on, key, velocity, channel, time }`: a note leaving the last plug-in                                                                                                            |
+| `midiout`       | chain   | `{ data, time }`: a MIDI message leaving the last plug-in, its bytes; notes too, as note-on and note-off messages                                                                  |
 | `latencychange` | chain   | none: a plug-in reported a new latency, or one was added, removed or bypassed                                                                                                      |
 
 ```ts
@@ -157,6 +158,24 @@ A bypassed plug-in still takes parameter changes, fades out over one block (unle
 restart or removal), and lets go of its notes; brought back, it's reset and fades in. Notes sent to a bypassed
 plug-in pass on to the next one, as if it weren't there. Moving, removing or bypassing a plug-in also lets go of the
 notes held by the plug-ins after it, since their note-offs would no longer reach them.
+
+## MIDI
+
+`midi(bytes, when?)` sends one raw MIDI message, any kind, sysex included, timed like `noteOn`. A note-on or note-off
+becomes a note, exactly as `noteOn` and `noteOff` would. `connectMidi()` sends every message from every MIDI input the
+same way. Sysex from inputs needs `connectMidi({ sysex: true })`, which asks the browser for sysex access (most show a
+prompt). A CC mapped with `mapCC` moves its parameter and isn't sent on to the plug-in.
+
+- Each plug-in gets notes in the dialect its note input prefers (CLAP's note ports): CLAP notes, or MIDI note
+  messages. A plug-in that takes only MIDI 2 gets MIDI 1 messages in MIDI 2 packets (UMP message type 2). MIDI can't
+  express a choke or a note-off for any key, so a plug-in without CLAP notes gets a note-off on each channel, or All
+  Notes Off.
+- Other messages reach a plug-in as CLAP MIDI events, and sysex as CLAP sysex events, whatever its dialect.
+- Events from a player (MIDI input, and calls without a `when`) carry CLAP's live flag; timed ones don't.
+- A message is at most 1024 bytes (`midi()` returns `false` and `onLog` says why for a longer sysex), and one block
+  carries up to 4096 bytes of them: more waits for the next block.
+- A plug-in's MIDI output, sysex included, goes to the next plug-in and out of the chain. From MIDI 2 output, only
+  MIDI 1 messages in packets (UMP message type 2) are kept.
 
 ## Timing, transport and health
 

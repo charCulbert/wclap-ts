@@ -316,7 +316,7 @@ test("latency and tail: frames, and 0xffffffff for a tail that rings on", async 
     assert.deepEqual(await report("HeadlessGain"), [0, 0], "none reported");
 });
 
-test("events a plug-in sends out: CLAP and MIDI notes, its own parameter values and gestures; the rest dropped", async () => {
+test("events a plug-in sends out: CLAP and MIDI notes, other MIDI, its own parameter values and gestures; the rest dropped", async () => {
     const instance = Instance.create(await openBundle(fixture("HeadlessGain")));
     const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", { log: () => undefined });
     const setup = main.activate(48000, 128);
@@ -341,7 +341,7 @@ test("events a plug-in sends out: CLAP and MIDI notes, its own parameter values 
     assert.ok(midi(1, 0x93, 64, 127), "a MIDI note-on, channel 4");
     assert.ok(midi(2, 0x93, 64, 0), "a MIDI note-on at velocity 0");
     assert.ok(midi(3, 0x82, 62, 0), "a MIDI note-off");
-    assert.ok(midi(4, 0xb0, 1, 100), "a control change, accepted");
+    assert.ok(midi(4, 0xb0, 1, 100), "a control change, passed on as MIDI");
 
     header(clap_event_note.size, 5, CLAP_EVENT_NOTE_ON);
     const note = instance.wasm.struct(clap_event_note, asPtr(at));
@@ -369,12 +369,14 @@ test("events a plug-in sends out: CLAP and MIDI notes, its own parameter values 
     const got = main.output.events.slice(0, main.output.count).map((e) => {
         if (e.type === "note-on" || e.type === "note-off") return [e.at, e.type, e.channel, e.key, e.velocity];
         if (e.type === "param") return [e.at, e.type, e.id, e.value];
+        if (e.type === "midi") return [e.at, e.type, ...e.data.subarray(e.offset, e.offset + e.size)];
         return [e.at, e.type, "id" in e ? e.id : -1];
     });
     assert.deepEqual(got, [
         [1, "note-on", 3, 64, 1],
         [2, "note-off", 3, 64, 0],
         [3, "note-off", 2, 62, 0],
+        [4, "midi", 0xb0, 1, 100],
         [5, "note-on", 1, 48, 0.5],
         [6, "param", 7, 0.25],
         [7, "gesture-begin", 7],

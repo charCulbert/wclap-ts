@@ -15,8 +15,10 @@ export interface ParamInfo {
 // -1 (or left out) for none; a note-off or choke with none ends every voice on its key and channel. A choke stops
 // voices at once, with no release. A modulation offsets a parameter without moving it, for every voice or (with
 // `key` or `noteId`) one note's; an expression shapes one note (CLAP_NOTE_EXPRESSION_*: volume, pan, tuning,
-// vibrato, expression, brightness, pressure).
-export type Event =
+// vibrato, expression, brightness, pressure). A MIDI event is one raw message (sysex included): its `size` bytes
+// from `offset` in `data`, a buffer reused from block to block. `live`: from a player now (Web MIDI, or a call
+// without a time), sent with CLAP_EVENT_IS_LIVE.
+export type Event = (
     | {
           at: number;
           type: "note-on" | "note-off" | "note-choke";
@@ -50,7 +52,9 @@ export type Event =
           target?: number;
       }
     // A plug-in's interface began or ended moving a parameter (one undo step, for a host that keeps them).
-    | { at: number; type: "gesture-begin" | "gesture-end"; id: number; target?: number };
+    | { at: number; type: "gesture-begin" | "gesture-end"; id: number; target?: number }
+    | { at: number; type: "midi"; data: Uint8Array; offset: number; size: number; target?: number }
+) & { live?: boolean };
 
 // Channel counts per port, and what each port is, so a graph can tell the main input from a sidechain.
 export interface Ports {
@@ -87,6 +91,11 @@ export interface AudioSetup {
     params: number;
     // The plug-in's clap.tail, read while it's in its tail; 0 without one.
     tail: number;
+    // Room in the plug-in's memory for each block's MIDI bytes (sysex), MIDI_AREA long.
+    midi: number;
+    // How its first note input takes notes: CLAP_NOTE_DIALECT_CLAP, _MIDI or _MIDI2; and every dialect it takes.
+    dialect: number;
+    dialects: number;
 }
 
 // Tempo and play state for plug-ins that follow the host (arpeggiators, synced delays).

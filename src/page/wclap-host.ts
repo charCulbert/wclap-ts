@@ -1,8 +1,9 @@
 // A host of plug-ins on the page: one AudioWorkletNode with its arrangement (a chain, or yours), the plug-ins in
 // it, events in and out on one clock, transport, MIDI, and createChain / createHost.
 
-import { EventQueue, type Timed } from "../events/event-queue.ts";
+import { EventQueue, MAX_MIDI_BYTES, type Timed } from "../events/event-queue.ts";
 import { Clock } from "../events/live-event-clock.ts";
+import { midiLength } from "../plugin/clap-host-callbacks.ts";
 import { canAttach } from "../plugin/wasm-instance.ts";
 import { type Bundle, openBundle } from "../plugin/wclap-bundle.ts";
 import type { FromThread } from "../runtime/thread.ts";
@@ -14,7 +15,7 @@ import { fetchBytes, Link, modules, nextPluginId, plugins, type Source } from ".
 import { Midi } from "./midi.ts";
 import { hideInterface } from "./plugin-interface.ts";
 import { Transport } from "./transport.ts";
-import { type HostEvents, type NoteOut, TypedTarget } from "./typed-events.ts";
+import { type HostEvents, type MidiOut, type NoteOut, TypedTarget } from "./typed-events.ts";
 import { WclapPlugin } from "./wclap-plugin.ts";
 
 export interface ChainOptions {
@@ -65,7 +66,8 @@ export interface AddOptions {
     maxMemoryMB?: number;
 }
 
-// Events: "noteout" (CustomEvent<NoteOut>) for notes leaving the last plug-in, "latencychange" when the chain's
+// Events: "noteout" (CustomEvent<NoteOut>) for notes leaving the last plug-in, "midiout" (CustomEvent<MidiOut>) for
+// every MIDI message leaving it (notes too), "latencychange" when the chain's
 // latency may have changed (a plug-in reported one, or one was added, removed or bypassed).
 export class WclapHost extends TypedTarget<HostEvents> {
     readonly context: BaseAudioContext;
@@ -78,7 +80,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
     readonly options: ChainOptions;
     readonly #queue: EventQueue;
     // Note-offs the queue had no room for, sent as soon as it has: a lost one would leave a note hanging.
-    readonly #retry: { frame: number; event: Timed; target: number }[] = [];
+    readonly #retry: { frame: number; event: Timed; target: number; live: boolean }[] = [];
     readonly #workers = new Map<number, { worker: Worker; link: Link }>();
     readonly #threads = new Map<number, Set<Worker>>();
     readonly #drain: ReturnType<typeof setInterval>;
@@ -120,18 +122,19 @@ export class WclapHost extends TypedTarget<HostEvents> {
         this.#drain = setInterval(() => {
             this.#sendRetries();
             back.drain((frame, e) => {
+                const time = frame / context.sampleRate;
                 if (e.type === "param") plugins.get(e.target)?.changed(e.id, e.value, frame);
                 else if (e.type === "gesture-begin" || e.type === "gesture-end")
                     plugins.get(e.target)?.gesture(e.id, e.type === "gesture-begin");
+                else if (e.type === "midi") this.#midiOut(e.data, time);
                 else if (e.type === "note-on" || e.type === "note-off") {
-                    const note: NoteOut = {
-                        on: e.type === "note-on",
-                        key: e.key,
-                        velocity: e.velocity,
-                        channel: e.channel ?? 0,
-                        time: frame / context.sampleRate,
-                    };
+                    const on = e.type === "note-on";
+                    const channel = e.channel ?? 0;
+                    const note: NoteOut = { on, key: e.key, velocity: e.velocity, channel, time };
                     this.dispatchEvent(new CustomEvent("noteout", { detail: note }));
+                    if (e.key < 0 || channel < 0) return;
+                    const velocity = Math.min(127, Math.max(on ? 1 : 0, Math.round(e.velocity * 127)));
+                    this.#midiOut(Uint8Array.of((on ? 0x90 : 0x80) | channel, e.key, velocity), time);
                 }
             });
         }, 10);
@@ -335,23 +338,29 @@ export class WclapHost extends TypedTarget<HostEvents> {
         this.dispatchEvent(new Event("latencychange"));
     }
 
+    #midiOut(data: Uint8Array, time: number): void {
+        const detail: MidiOut = { data, time };
+        this.dispatchEvent(new CustomEvent("midiout", { detail }));
+    }
+
     #sendRetries(): void {
         while (this.#retry.length) {
             const r = this.#retry[0];
-            if (!r || !this.#queue.push(r.frame, r.event, r.target)) return;
+            if (!r || !this.#queue.push(r.frame, r.event, r.target, r.live)) return;
             this.#retry.shift();
         }
     }
 
-    // `when`: AudioContext time for an exact frame; without it, now (constant latency). `target`: a plug-in's id,
-    // or -1 for the first plug-in. False if the queue was full and the event dropped; a note-off or choke is never
-    // dropped, only sent a little later.
+    // `when`: AudioContext time for an exact frame; without it, now (constant latency), and the event is live
+    // (CLAP_EVENT_IS_LIVE) unless it says otherwise. `target`: a plug-in's id, or -1 for the first plug-in. False if
+    // the queue was full and the event dropped; a note-off or choke is never dropped, only sent a little later.
     schedule(event: Timed, when?: number, target = -1, sourceMs = performance.now()): boolean {
         const frame = when === undefined ? this.clock.frameAt(sourceMs) : Math.round(when * this.context.sampleRate);
+        const live = event.live ?? when === undefined;
         this.#sendRetries();
-        if (this.#queue.push(frame, event, target)) return true;
+        if (this.#queue.push(frame, event, target, live)) return true;
         if (event.type === "note-off" || event.type === "note-choke") {
-            this.#retry.push({ frame, event: { ...event }, target });
+            this.#retry.push({ frame, event: { ...event }, target, live });
             return true;
         }
         this.#dropped++;
@@ -371,9 +380,39 @@ export class WclapHost extends TypedTarget<HostEvents> {
         return this.schedule({ type: "note-choke", key, velocity: 0, channel }, when);
     }
 
-    // MIDI: every input plays the host; controller knobs move mapped parameters; notes leaving go to an output.
-    connectMidi(): Promise<() => void> {
-        return this.#midi.connect();
+    // One raw MIDI message (sysex included, up to MAX_MIDI_BYTES) to the first plug-in, at `when` like noteOn.
+    // Note-ons and note-offs become notes, as noteOn and noteOff would. False if it was dropped: the queue was full,
+    // or it isn't one whole message.
+    midi(bytes: ArrayLike<number>, when?: number): boolean {
+        return this.sendMidi(bytes, when, -1);
+    }
+
+    /** @internal */
+    sendMidi(bytes: ArrayLike<number>, when: number | undefined, target: number, sourceMs?: number): boolean {
+        const status = bytes[0] ?? 0;
+        const length = status === 0xf0 ? bytes.length : midiLength(status);
+        if (status < 0x80 || bytes.length < length) return false;
+        if (length > MAX_MIDI_BYTES) {
+            this.options.onLog?.(`a ${length}-byte sysex is longer than the ${MAX_MIDI_BYTES} bytes carried: dropped`);
+            return false;
+        }
+        const data = Uint8Array.from({ length }, (_, i) => bytes[i] ?? 0);
+        const kind = status & 0xf0;
+        const [, key = 0, velocity = 0] = data;
+        const channel = status & 0x0f;
+        const event: Timed =
+            kind === 0x90 && velocity > 0
+                ? { type: "note-on", key, velocity: velocity / 127, channel }
+                : kind === 0x80 || kind === 0x90
+                  ? { type: "note-off", key, velocity: velocity / 127, channel }
+                  : { type: "midi", data, offset: 0, size: length };
+        return this.schedule(event, when, target, sourceMs);
+    }
+
+    // MIDI: every input plays the host; controller knobs move mapped parameters; what leaves goes to an output.
+    // Sysex comes in only with `{ sysex: true }`, which asks the browser for sysex access (a prompt in most).
+    connectMidi(options: { sysex?: boolean } = {}): Promise<() => void> {
+        return this.#midi.connect(options);
     }
     mapCC(cc: number, plugin: WclapPlugin, paramId: number, channel = -1): void {
         this.#midi.mapCC(cc, plugin, paramId, channel);

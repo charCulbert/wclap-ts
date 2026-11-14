@@ -20,7 +20,7 @@ export interface HostContext {
     readonly options: unknown;
     // To the page, as the host's "message" event.
     post(data: unknown): void;
-    // Notes leaving the arrangement (MIDI out), at frames from `blockStart`.
+    // Notes and MIDI leaving the arrangement (MIDI out), at frames from `blockStart`.
     notesOut(blockStart: number, notes: readonly Event[], count: number): void;
 }
 

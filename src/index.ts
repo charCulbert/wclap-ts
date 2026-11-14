@@ -4,7 +4,7 @@ export { alignLatency } from "./page/align-latency.ts";
 export { isolate } from "./page/isolate.ts";
 export { loadWclap } from "./page/load-wclap.ts";
 export { createTransport, Transport, type TransportOptions } from "./page/transport.ts";
-export type { HostEvents, NoteOut, PluginEvents } from "./page/typed-events.ts";
+export type { HostEvents, MidiOut, NoteOut, PluginEvents } from "./page/typed-events.ts";
 export {
     type AddOptions,
     type ChainEvents,

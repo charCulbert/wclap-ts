@@ -4,6 +4,8 @@
 import {
     CLAP_CORE_EVENT_SPACE_ID,
     CLAP_EVENT_MIDI,
+    CLAP_EVENT_MIDI_SYSEX,
+    CLAP_EVENT_MIDI2,
     CLAP_EVENT_NOTE_CHOKE,
     CLAP_EVENT_NOTE_END,
     CLAP_EVENT_NOTE_OFF,
@@ -28,6 +30,8 @@ import {
     CLAP_VERSION_MAJOR,
     CLAP_VERSION_MINOR,
     CLAP_VERSION_REVISION,
+    clap_event_midi_sysex,
+    clap_event_midi2,
     clap_event_note,
     clap_event_note_expression,
     clap_event_param_value,
@@ -63,7 +67,20 @@ export type Request =
 export type GuiRequest = "resize" | "show" | "hide" | "closed" | "hints";
 
 export const MAX_EVENTS = 256;
-export const EVENT_SIZE = Math.max(clap_event_note.size, clap_event_param_value.size, clap_event_note_expression.size);
+export const EVENT_SIZE = Math.max(
+    clap_event_note.size,
+    clap_event_param_value.size,
+    clap_event_note_expression.size,
+    clap_event_midi2.size,
+    clap_event_midi_sysex.size,
+);
+// MIDI bytes (sysex) one block's events carry, at most: what the scheduler and each plug-in's output keep room for.
+export const BLOCK_MIDI_BYTES = 4096;
+// The longest MIDI message (a sysex) carried anywhere: the event queue refuses a longer one, and a plug-in's is
+// dropped.
+export const MAX_MIDI_BYTES = 1024;
+// Room in a plug-in's memory for a block's MIDI bytes: the scheduler's and the previous plug-in's in a chain.
+export const MIDI_AREA = 2 * BLOCK_MIDI_BYTES;
 
 // The input events of the block being processed: written by whoever calls process, read by the plug-in.
 export interface EventList {
@@ -89,8 +106,33 @@ export class OutputList {
                     port: 0,
                     id: 0,
                     value: 0,
+                    live: false,
+                    data: this.#bytes,
+                    offset: 0,
+                    size: 0,
                 }) as Event,
         );
+    }
+
+    readonly #bytes = new Uint8Array(BLOCK_MIDI_BYTES);
+    #used = 0;
+    // A few bytes for decoding one message.
+    readonly scratch = new Uint8Array(3);
+
+    // A MIDI message the plug-in sent, copied (its bytes live only for the call): `size` bytes from `from` in `source`.
+    pushMidi(at: number, source: Uint8Array, from: number, size: number): boolean {
+        if (this.count === 0) this.#used = 0;
+        const e = this.events[this.count] as { at: number; type: string; offset: number; size: number };
+        if (!e || this.#used + size > BLOCK_MIDI_BYTES) return false;
+        const bytes = this.#bytes;
+        for (let i = 0; i < size; i++) bytes[this.#used + i] = source[from + i] ?? 0;
+        e.at = at;
+        e.type = "midi";
+        e.offset = this.#used;
+        e.size = size;
+        this.#used += size;
+        this.count++;
+        return true;
     }
     pushGesture(at: number, id: number, begin: boolean): boolean {
         const e = this.events[this.count] as { at: number; type: string; id: number };
@@ -198,8 +240,28 @@ const SLOTS = [
 // By CLAP_EVENT_NOTE_ON, _OFF, _CHOKE and _END: 0 to 3.
 const NOTE_TYPES = ["note-on", "note-off", "note-choke", "note-end"] as const;
 
-// A note leaving the plug-in, as a CLAP note event (with the note ID it gave) or a MIDI note message; anything else
-// is accepted and dropped.
+// Bytes in a MIDI 1 message by its status byte (sysex aside).
+export function midiLength(status: number): number {
+    if (status < 0xf0) return (status & 0xe0) === 0xc0 ? 2 : 3;
+    return status === 0xf1 || status === 0xf3 ? 2 : status === 0xf2 ? 3 : 1;
+}
+
+// A MIDI 1 message from the plug-in: a note becomes a note event (as one in CLAP's dialect would be), anything else
+// goes on as it is.
+function readMidi(time: number, bytes: Uint8Array, at: number, length: number, out: OutputList): boolean {
+    const status = bytes[at] ?? 0;
+    const key = bytes[at + 1] ?? 0;
+    const velocity = bytes[at + 2] ?? 0;
+    const channel = status & 0x0f;
+    const kind = status & 0xf0;
+    if (kind === 0x90 && velocity > 0) return out.push(time, "note-on", key, velocity / 127, channel);
+    if (kind === 0x80 || kind === 0x90) return out.push(time, "note-off", key, velocity / 127, channel);
+    return out.pushMidi(time, bytes, at, length);
+}
+
+// What leaves the plug-in: notes (with the note IDs it gave), parameter changes and gestures, and MIDI; anything else
+// is accepted and dropped. MIDI 2 is taken as MIDI 1 messages in a packet (UMP message type 2); other packets are
+// dropped.
 function readOutput(wasm: Wasm, at: number, out: OutputList): boolean {
     const v = wasm.view;
     if (v.getUint16(at + 8, true) !== CLAP_CORE_EVENT_SPACE_ID) return true;
@@ -224,13 +286,20 @@ function readOutput(wasm: Wasm, at: number, out: OutputList): boolean {
         return out.pushParam(time, v.getUint32(at + 16, true), v.getFloat64(at + 40, true));
     if (type === CLAP_EVENT_PARAM_GESTURE_BEGIN || type === CLAP_EVENT_PARAM_GESTURE_END)
         return out.pushGesture(time, v.getUint32(at + 16, true), type === CLAP_EVENT_PARAM_GESTURE_BEGIN);
-    if (type === CLAP_EVENT_MIDI) {
-        const status = v.getUint8(at + 18) & 0xf0;
-        const key = v.getUint8(at + 19);
-        const velocity = v.getUint8(at + 20);
-        const channel = v.getUint8(at + 18) & 0x0f;
-        if (status === 0x90 && velocity > 0) return out.push(time, "note-on", key, velocity / 127, channel);
-        if (status === 0x80 || status === 0x90) return out.push(time, "note-off", key, velocity / 127, channel);
+    if (type === CLAP_EVENT_MIDI) return readMidi(time, wasm.bytes, at + 18, midiLength(v.getUint8(at + 18)), out);
+    if (type === CLAP_EVENT_MIDI_SYSEX) {
+        const size = v.getUint32(at + 24, true);
+        return size <= MAX_MIDI_BYTES && out.pushMidi(time, wasm.bytes, v.getUint32(at + 20, true), size);
+    }
+    if (type === CLAP_EVENT_MIDI2) {
+        const word = v.getUint32(at + 20, true);
+        if (word >>> 28 !== 2) return true;
+        // Type 4 bits, group 4 bits, then the MIDI 1 message's three bytes.
+        const bytes = out.scratch;
+        bytes[0] = (word >>> 16) & 0xff;
+        bytes[1] = (word >>> 8) & 0x7f;
+        bytes[2] = word & 0x7f;
+        return readMidi(time, bytes, 0, midiLength(bytes[0] ?? 0), out);
     }
     return true;
 }

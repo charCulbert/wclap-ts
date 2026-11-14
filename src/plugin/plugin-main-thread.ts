@@ -6,6 +6,7 @@ import {
     CLAP_EXT_GUI,
     CLAP_EXT_LATENCY,
     CLAP_EXT_NOTE_NAME,
+    CLAP_EXT_NOTE_PORTS,
     CLAP_EXT_PARAMS,
     CLAP_EXT_PRESET_LOAD,
     CLAP_EXT_PRESET_LOAD_COMPAT,
@@ -17,6 +18,10 @@ import {
     CLAP_EXT_TIMER_SUPPORT,
     CLAP_EXT_WEBVIEW,
     CLAP_INVALID_ID,
+    CLAP_NOTE_DIALECT_CLAP,
+    CLAP_NOTE_DIALECT_MIDI,
+    CLAP_NOTE_DIALECT_MIDI_MPE,
+    CLAP_NOTE_DIALECT_MIDI2,
     CLAP_PRESET_DISCOVERY_FACTORY_ID,
     CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT,
     CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN,
@@ -26,6 +31,7 @@ import {
     clap_event_transport,
     clap_istream,
     clap_note_name,
+    clap_note_port_info,
     clap_ostream,
     clap_param_info,
     clap_plugin,
@@ -33,6 +39,7 @@ import {
     clap_plugin_gui,
     clap_plugin_latency,
     clap_plugin_note_name,
+    clap_plugin_note_ports,
     clap_plugin_params,
     clap_plugin_preset_load,
     clap_plugin_remote_controls,
@@ -57,6 +64,7 @@ import {
     type EventList,
     installHost,
     MAX_EVENTS,
+    MIDI_AREA,
     OutputList,
     type Request,
     writeHost,
@@ -442,6 +450,8 @@ export class PluginMain {
             process: process.at,
             transport: transport.at,
             events: this.instance.alloc(MAX_EVENTS * EVENT_SIZE),
+            midi: this.instance.alloc(MIDI_AREA),
+            ...this.#noteDialect(),
             inputs: inputs.channels,
             outputs: outputs.channels,
             maxFrames,
@@ -458,6 +468,33 @@ export class PluginMain {
         if (!this.plugin.call("activate", this.plugin.at, sampleRate, 1, maxFrames)) throw new Error("activate failed");
         this.#active = true;
         return setup;
+    }
+
+    // How its first note input takes notes: in the dialect it prefers (MIDI for MIDI with MPE), or without one, CLAP
+    // if it takes it, then MIDI, then MIDI 2. A plug-in without note inputs gets CLAP notes.
+    #noteDialect(): { dialect: number; dialects: number } {
+        const ports = this.extension(CLAP_EXT_NOTE_PORTS, clap_plugin_note_ports);
+        const info = this.instance.allocStruct(clap_note_port_info);
+        if (
+            !ports ||
+            ports.call("count", this.plugin.at, true) < 1 ||
+            !ports.call("get", this.plugin.at, 0, true, info.at)
+        )
+            return { dialect: CLAP_NOTE_DIALECT_CLAP, dialects: CLAP_NOTE_DIALECT_CLAP };
+        const dialects = info.get("supported_dialects") as number;
+        const preferred = info.get("preferred_dialect") as number;
+        const midi = CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_MIDI_MPE;
+        const dialect =
+            preferred === CLAP_NOTE_DIALECT_CLAP || preferred === CLAP_NOTE_DIALECT_MIDI2
+                ? preferred
+                : preferred & midi
+                  ? CLAP_NOTE_DIALECT_MIDI
+                  : dialects & CLAP_NOTE_DIALECT_CLAP || !dialects
+                    ? CLAP_NOTE_DIALECT_CLAP
+                    : dialects & midi
+                      ? CLAP_NOTE_DIALECT_MIDI
+                      : CLAP_NOTE_DIALECT_MIDI2;
+        return { dialect, dialects };
     }
 
     #portChannels(input: boolean): number[] {

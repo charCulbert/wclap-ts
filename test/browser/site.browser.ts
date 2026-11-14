@@ -369,6 +369,97 @@ test("notes from the page carry note IDs: overlapping notes end oldest first, an
     await page.context().close();
 });
 
+test("raw MIDI from the page: untimed calls are live, timed ones aren't, and notes reach a MIDI-dialect plug-in as MIDI", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap } = window as unknown as Harness;
+        // MidiEcho marks each event it receives: its CLAP event type on the left, its flags on the right.
+        const context = new OfflineAudioContext({ numberOfChannels: 2, length: 1024, sampleRate: 48000 });
+        const plugin = await wclap.loadWclap(context, "/fixtures/MidiEcho.wasm", { lead: 100 / 48000 });
+        plugin.connect(context.destination);
+        const at = (frame: number) => frame / context.sampleRate;
+        const sent = [
+            plugin.midi([0xe0, 0, 64]), // now: frame 100, live
+            plugin.midi([0x90, 60, 100], at(300)),
+            plugin.midi([0xf0, 1, 2, 3, 0xf7], at(400)),
+            plugin.midi([0xd0, 9, 9, 9], at(500)), // the first two bytes are the message
+            plugin.midi([0x40, 1]), // no status byte: refused
+        ];
+        const audio = await context.startRendering();
+        await plugin.destroy();
+        const marks = (c: number) => [...audio.getChannelData(c)].flatMap((v, i) => (v !== 0 ? [[i, v]] : []));
+        return { sent, types: marks(0), flags: marks(1) };
+    });
+    assert.deepEqual(r.sent, [true, true, true, true, false]);
+    assert.deepEqual(r.types, [
+        [100, 10], // CLAP_EVENT_MIDI
+        [300, 10], // a note, as MIDI
+        [400, 11], // CLAP_EVENT_MIDI_SYSEX
+        [500, 10],
+    ]);
+    assert.deepEqual(r.flags, [[100, 1]], "only the untimed message is CLAP_EVENT_IS_LIVE");
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test("Web MIDI: pitch bend, aftertouch and sysex reach the plug-in and come back out as midiout and to a MIDI output", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        // A fake Web MIDI: one input the test plays, one output that records what it's sent.
+        const input = new EventTarget();
+        const access = Object.assign(new EventTarget(), { inputs: new Map([["in", input]]) });
+        const asked: unknown[] = [];
+        Object.defineProperty(navigator, "requestMIDIAccess", {
+            value: async (options: unknown) => {
+                asked.push(options);
+                return access;
+            },
+            configurable: true,
+        });
+        const play = (data: number[]) => {
+            const e = new Event("midimessage");
+            Object.defineProperty(e, "data", { value: Uint8Array.from(data) });
+            Object.defineProperty(e, "timeStamp", { value: performance.now() });
+            input.dispatchEvent(e);
+        };
+        const context = new AudioContext();
+        const plugin = await wclap.loadWclap(context, "/fixtures/MidiEcho.wasm");
+        plugin.connect(new GainNode(context, { gain: 0 })).connect(context.destination);
+        const out: number[][] = [];
+        plugin.host.addEventListener("midiout", (e) => void out.push([...e.detail.data]));
+        const device: number[][] = [];
+        plugin.host.connectMidiOut({ send: (data: number[]) => void device.push([...data]) } as unknown as MIDIOutput);
+        const stop = await plugin.connectMidi({ sysex: true });
+        const messages = [
+            [0xe3, 0x00, 0x60],
+            [0xa3, 60, 90],
+            [0xd3, 70],
+            [0xf0, 0x7e, 0x7f, 0x06, 0x01, 0xf7],
+            [0x93, 62, 100],
+            [0x83, 62, 0],
+        ];
+        for (const m of messages) {
+            play(m);
+            await sleep(20);
+        }
+        await sleep(300);
+        stop();
+        await plugin.destroy();
+        await context.close();
+        return { asked, messages, out, device };
+    });
+    assert.deepEqual(r.asked, [{ sysex: true }]);
+    assert.deepEqual(r.out, r.messages);
+    assert.deepEqual(r.device, r.messages);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
 test("an interface whose URI has a query string loads in its frame", { timeout: 60000 }, async () => {
     const { page, errors } = await harness();
     const uri = await page.evaluate(async () => {
