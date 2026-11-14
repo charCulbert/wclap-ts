@@ -369,6 +369,41 @@ test("notes from the page carry note IDs: overlapping notes end oldest first, an
     await page.context().close();
 });
 
+test("the render plug-in renders offline on an OfflineAudioContext, faster than real time, and realtime on an AudioContext", {
+    timeout: 60000,
+}, async (t) => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        // render writes its render mode + 1 into every sample: 1 realtime, 2 offline.
+        const values = (samples: Float32Array) => [...new Set(samples)];
+        const offline = new OfflineAudioContext({ numberOfChannels: 1, length: 10 * 48000, sampleRate: 48000 });
+        const plugin = await wclap.loadWclap(offline, "/cache/render.wclap.tar.gz");
+        plugin.connect(offline.destination);
+        const begin = performance.now();
+        const audio = await offline.startRendering();
+        const ms = performance.now() - begin;
+        await plugin.destroy();
+        const context = new AudioContext();
+        const live = await wclap.loadWclap(context, "/cache/render.wclap.tar.gz");
+        const analyser = new AnalyserNode(context, { fftSize: 2048 });
+        live.connect(analyser);
+        analyser.connect(context.destination);
+        await sleep(300);
+        const samples = new Float32Array(2048);
+        analyser.getFloatTimeDomainData(samples);
+        await live.destroy();
+        await context.close();
+        return { ms, offline: values(audio.getChannelData(0)), realtime: values(samples) };
+    });
+    t.diagnostic(`a 10 s offline render took ${r.ms.toFixed(0)} ms`);
+    assert.deepEqual(r.offline, [2], "offline mode on every frame");
+    assert.ok(r.ms < 5000, `${r.ms} ms`);
+    assert.deepEqual(r.realtime, [1]);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
 test("raw MIDI from the page: untimed calls are live, timed ones aren't, and notes reach a MIDI-dialect plug-in as MIDI", {
     timeout: 60000,
 }, async () => {

@@ -3,21 +3,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { EventQueue, Scheduler, type Timed } from "../src/events/event-queue.ts";
-import { CLAP_NOTE_EXPRESSION_TUNING } from "../src/plugin/clap.generated.ts";
+import {
+    CLAP_EXT_REMOTE_CONTROLS,
+    CLAP_INVALID_ID,
+    CLAP_NOTE_EXPRESSION_TUNING,
+} from "../src/plugin/clap.generated.ts";
 import { OutputList } from "../src/plugin/clap-host-callbacks.ts";
+import { PluginMain } from "../src/plugin/plugin-main-thread.ts";
 import { Plugin } from "../src/plugin/plugin-one-thread.ts";
-import type { Event } from "../src/plugin/plugin-types.ts";
+import type { Change, Event, MainOptions } from "../src/plugin/plugin-types.ts";
 import { Instance } from "../src/plugin/wasm-instance.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
 import { Chain } from "../src/worklet/chain.ts";
 import type { Processor } from "../src/worklet/plugin-runner.ts";
 import { fetchFixture, TEST_PLUGINS } from "./fetch-fixture.ts";
 
-const load = async (name: string) => {
+const load = async (name: string, options: MainOptions = {}) => {
     const fixture = TEST_PLUGINS.find((f) => f.name === name);
     assert.ok(fixture);
     const instance = Instance.create(await openBundle(await fetchFixture(fixture)), { log: () => undefined });
-    const plugin = Plugin.create(instance, instance.plugins()[0]?.id ?? "", () => undefined);
+    const id = instance.plugins()[0]?.id ?? "";
+    const plugin = Plugin.wrap(PluginMain.create(instance, id, { log: () => undefined, ...options }));
     plugin.activate(48000, 128);
     return plugin;
 };
@@ -384,5 +390,217 @@ test("gui-lifecycle: audio passes through unchanged on the main stereo port", as
     const out = plugin.process(128, [], [[left, right]])[0];
     assert.deepEqual([...(out?.[0] ?? [])], [...left]);
     assert.deepEqual([...(out?.[1] ?? [])], [...right]);
+    plugin.destroy();
+});
+
+// The value of each channel of each output port, for plug-ins that hold one value across a block.
+const held = (out: Float32Array[][]) => out.map((port) => port.map(constant));
+const programChange = (at: number, program: number): Event => ({
+    at,
+    type: "midi",
+    data: Uint8Array.of(0xc0, program),
+    offset: 0,
+    size: 2,
+});
+
+// render: every sample is the render mode plus one, 1 for realtime, 2 for offline. The browser test renders it on an
+// OfflineAudioContext, which is where wclap-ts asks for offline mode.
+
+test("render: realtime unless the host renders offline, which it says before the first block", async () => {
+    const realtime = await load("render");
+    assert.deepEqual(realtime.ports.outputs, [1]);
+    assert.deepEqual(held(realtime.process(128)), [[1]]);
+    realtime.destroy();
+    const offline = await load("render", { offline: true });
+    assert.deepEqual(held(offline.process(128)), [[2]], "offline from the first frame");
+    offline.destroy();
+});
+
+// note-name: left the kit, right how many times the host has read the names.
+
+test("note-name: the names, read again when the plug-in says they changed after a program change", async () => {
+    const changes: Change[] = [];
+    const plugin = await load("note-name", { onChange: (what) => changes.push(what) });
+    const names = () => plugin.main.noteNames().map((n) => [n.key, n.name, n.port, n.channel]);
+    const kit = (snare: string) => [
+        [36, "Kick", 0, -1],
+        [38, snare, 0, -1],
+        [42, "Closed hi-hat", 0, -1],
+        [46, "Open hi-hat", 0, -1],
+        [-1, "Any key", 0, -1],
+    ];
+    assert.deepEqual(names(), kit("Snare"));
+    const [left, right] = plugin.process(16, [programChange(8, 1)])[0] ?? [];
+    assert.deepEqual(runs(left ?? new Float32Array()), ["0:0", "8:1"]);
+    assert.deepEqual(runs(right ?? new Float32Array()), ["0:1"], "one read");
+    plugin.idle();
+    assert.deepEqual(changes, ["note-names"], "note_name.changed reaches the page as a change, once");
+    assert.deepEqual(names(), kit("Rim"));
+    assert.deepEqual(held(plugin.process(16)), [[1, 2]]);
+    plugin.process(16, [programChange(0, 0)]);
+    plugin.idle();
+    assert.deepEqual(changes, ["note-names", "note-names"]);
+    assert.deepEqual(names(), kit("Snare"));
+    plugin.destroy();
+});
+
+// remote-controls: left the parameter ID + 1 of the last value set, right how many times the host has read the pages.
+
+test("remote-controls: two pages; a control sets the parameter its page names, also after the layout changes", async () => {
+    const plugin = await load("remote-controls");
+    assert.deepEqual(
+        plugin.params().map((p) => [p.id, p.name]),
+        [
+            [0, "A"],
+            [1, "B"],
+            [2, "C"],
+            [3, "D"],
+        ],
+    );
+    const none = CLAP_INVALID_ID;
+    // Each read of the pages; control 1 of Main, turned, sets the parameter in that slot of the pages last read.
+    let pages = plugin.main.remoteControls();
+    const turn = (at: number): Event => ({ at, type: "param", id: pages[0]?.params[1] ?? -1, value: 1 });
+    assert.deepEqual(
+        pages.map((p) => [p.section, p.id, p.name, p.forPreset, p.params]),
+        [
+            ["Controls", 1, "Main", false, [0, 1, 2, 3, none, none, none, none]],
+            ["Controls", 2, "Preset", true, [2, 3, none, none, none, none, none, none]],
+        ],
+    );
+    assert.deepEqual(runs(plugin.process(16, [turn(4)])[0]?.[0] ?? new Float32Array()), ["0:0", "4:2"]);
+    plugin.process(16, [programChange(0, 1)]);
+    plugin.idle();
+    pages = plugin.main.remoteControls();
+    assert.deepEqual(pages[0]?.params, [3, 2, 1, 0, none, none, none, none]);
+    const [left, right] = plugin.process(16, [turn(4)])[0] ?? [];
+    assert.deepEqual(runs(left ?? new Float32Array()), ["0:2", "4:3"], "now parameter C");
+    assert.deepEqual(runs(right ?? new Float32Array()), ["0:2"], "one read of the pages each time");
+    plugin.destroy();
+});
+
+test("remote-controls: a layout change reaches the page through remote_controls.changed and suggest_page", {
+    todo: "wclap-ts offers no clap.remote-controls host extension, so the plug-in can't say its pages changed or suggest one (plan: Small gaps, as fixtures need them)",
+}, async () => {
+    const changes: Change[] = [];
+    const plugin = await load("remote-controls", { onChange: (what) => changes.push(what) });
+    assert.ok(plugin.main.hostExtensions().some(([name]) => name === CLAP_EXT_REMOTE_CONTROLS));
+    plugin.process(16, [programChange(0, 1)]);
+    plugin.idle();
+    assert.equal(changes.length, 1);
+    plugin.destroy();
+});
+
+// state-context: left the context the loaded state was saved for, right the context it was loaded with; -1 before any
+// load, 0 for state.save and state.load, which have none.
+
+test("state-context: nothing loaded yet, then state.save and state.load round-trip with no context", async () => {
+    const plugin = await load("state-context");
+    assert.deepEqual(held(plugin.process(16)), [[-1, -1]]);
+    plugin.loadState(plugin.saveState());
+    assert.deepEqual(held(plugin.process(16)), [[0, 0]]);
+    plugin.destroy();
+});
+
+test("state-context: a preset, a duplicate and a project are saved and loaded with their own context", {
+    todo: "saveState and loadState take no context, so the plug-in sees state.save and state.load (plan: State context)",
+}, async () => {
+    const plugin = await load("state-context");
+    plugin.loadState(plugin.saveState());
+    assert.deepEqual(held(plugin.process(16)), [[1, 1]], "a preset");
+    plugin.destroy();
+});
+
+// param-indication: output 0 the mapping and its colour, output 1 the automation state and its colour, -1 until the
+// host says.
+
+test("param-indication: two stereo outputs, every channel -1 until the host indicates", async () => {
+    const plugin = await load("param-indication");
+    assert.deepEqual(plugin.ports.outputs, [2, 2]);
+    assert.deepEqual(
+        plugin.params().map((p) => [p.id, p.name, p.min, p.max, p.default]),
+        [[1, "Target", 0, 1, 0]],
+    );
+    assert.deepEqual(held(plugin.process(16)), [
+        [-1, -1],
+        [-1, -1],
+    ]);
+    plugin.destroy();
+});
+
+test("param-indication: mapping a parameter to a control and automating it are indicated, then cleared", {
+    todo: "wclap-ts never calls param_indication.set_mapping or set_automation (plan: Small gaps, as fixtures need them)",
+}, async () => {
+    const plugin = await load("param-indication");
+    // Mapped to a control (a MIDI CC, say, through Midi.mapCC on the page), output 0 reads 1 on the left.
+    assert.deepEqual(held(plugin.process(16))[0]?.[0], 1);
+    plugin.destroy();
+});
+
+// voice-info: left the voice count, right how many times the host has read the voice info.
+
+test("voice-info: read once active, and again when the plug-in says it changed", {
+    todo: "wclap-ts doesn't read voice_info or offer clap.voice-info to the plug-in (plan: Small gaps, as fixtures need them)",
+}, async () => {
+    const plugin = await load("voice-info");
+    const reads = held(plugin.process(16))[0]?.[1] ?? 0;
+    assert.ok(reads >= 1, "read after activating");
+    plugin.process(16, [programChange(8, 0)]);
+    plugin.idle();
+    assert.equal(held(plugin.process(16))[0]?.[1], reads + 1, "read again after voice_info.changed");
+    plugin.destroy();
+});
+
+// log: left how many messages it has sent, right the severity of the last.
+
+const LOG = [
+    "log test 1/7: debug, audio thread",
+    "log test 2/7: info, main thread, UTF-8 é✓",
+    "log test 3/7: warning, main thread",
+    "log test 4/7: error, main thread",
+    "log test 5/7: fatal, main thread",
+    "log test 6/7: host misbehaving, main thread",
+    "log test 7/7: plug-in misbehaving, main thread",
+];
+
+test("log: every severity from the audio and main threads, UTF-8 intact, and the plug-in keeps running", async () => {
+    const logged: string[] = [];
+    const plugin = await load("log", { log: (text) => logged.push(text) });
+    assert.deepEqual(held(plugin.process(16)), [[1, 0]]);
+    assert.deepEqual(logged, [`[0] ${LOG[0]}`]);
+    plugin.idle();
+    assert.deepEqual(
+        logged,
+        LOG.map((text, severity) => `[${severity}] ${text}`),
+    );
+    assert.deepEqual(held(plugin.process(16)), [[7, 6]], "still processing after FATAL and both MISBEHAVING");
+    plugin.destroy();
+});
+
+test("log: each message reaches the page with its severity apart from its text", {
+    todo: "onLog gets one string with the severity written into it (plan: Small gaps, as fixtures need them)",
+}, async () => {
+    const logged: unknown[][] = [];
+    const plugin = await load("log", { log: (...args: unknown[]) => void logged.push(args) });
+    plugin.process(16);
+    assert.deepEqual(logged[0], [LOG[0], 0]);
+    plugin.destroy();
+});
+
+// audio-ports-activation: two mono outputs, 1 and 2 while active, 0 once the host deactivates one.
+
+test("audio-ports-activation: both outputs active from the start", async () => {
+    const plugin = await load("audio-ports-activation");
+    assert.deepEqual(plugin.ports.outputs, [1, 1]);
+    assert.deepEqual(held(plugin.process(16)), [[1], [2]]);
+    plugin.destroy();
+});
+
+test("audio-ports-activation: an output the page doesn't use is deactivated while the plug-in is inactive", {
+    todo: "wclap-ts keeps every port active; no audio_ports_activation calls (plan: Small gaps, as fixtures need them)",
+}, async () => {
+    const plugin = await load("audio-ports-activation");
+    // A page that connects only output 1 would get output 2 deactivated: silence there.
+    assert.deepEqual(held(plugin.process(16)), [[1], [0]]);
     plugin.destroy();
 });
