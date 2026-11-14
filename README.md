@@ -194,15 +194,22 @@ is mapped (`indicate`), until `unmapCC`.
   then two `noteOff(60)` end the first note, then the second. `choke(key)` stops every note held on the key at once,
   with no release. The IDs stay inside wclap-ts; you play by key and channel.
 - Host-synced plug-ins (arpeggiators, synced delays) follow a transport: `chain.transport.tempo`, `.playing`,
-  `.setTimeSignature(n, d)`, `.seek(beats)`, and `.beats` for the position now. Each host has its own unless you
-  share one, which keeps them in step to the frame:
+  `.setTimeSignature(n, d)`, `.seek(beats, when?)`, `.play(when?)`, `.stop(when?)`, and `.beats` for the position
+  now. Each host has its own unless you share one, which keeps them in step to the frame:
 
   ```ts
   const transport = createTransport(context, { tempo: 128 });
   const drums = await createChain(context, { transport });
   const bass = await createChain(context, { transport });
-  transport.tempo = 132; // both, on the same block
+  transport.tempo = 132; // both, on the same frame
   ```
+- A tempo map replaces the tempo and signature with lists: `transport.setMap({ tempos: [{ beat, bpm, ramp? }],
+  signatures: [{ beat, numerator, denominator }] }, when?)`. Beats are quarter notes; a tempo with `ramp: true`
+  glides to the next one's, linearly in time. `transport.setLoop({ startBeat, endBeat } | null, when?)` loops while
+  playing. Plug-ins get every change on its frame, inside a block too: a tempo or signature point, the loop wrapping,
+  and anything you change at a `when`. Setting `tempo` changes it from the song's position on and keeps the map
+  before. `beatsToSeconds(map, beats)`, `secondsToBeats(map, seconds)` and `barAt(map, beats)` work it out on the
+  page.
 - On an `OfflineAudioContext` the same calls render faster than real time, and plug-ins with CLAP's render
   extension are told they render offline, so they may use their slower, better algorithms.
 - A host only runs while its node is connected, directly or through other nodes, to the context's destination. A

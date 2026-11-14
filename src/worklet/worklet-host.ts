@@ -7,7 +7,6 @@
 // wclap-ts/worklet in a module of yours, register it under a name, and pass that module and name to createHost.
 
 import { EventQueue, Scheduler } from "../events/event-queue.ts";
-import type { TransportAnchor } from "../page/transport.ts";
 import { Plugin } from "../plugin/plugin-one-thread.ts";
 import type { Event, Log, ParamInfo, Ports, Transport } from "../plugin/plugin-types.ts";
 import type { Descriptor } from "../plugin/wasm-instance.ts";
@@ -16,6 +15,7 @@ import { type FromMain, type MainCall, mainCall } from "../threads/main-thread-c
 import { AudioSide, type AudioStart, startMain } from "../threads/two-threads.ts";
 import { Runner, type Slot } from "./plugin-runner.ts";
 import type { HostContext, Topology } from "./topology.ts";
+import { type TransportAnchor, TransportClock } from "./transport-clock.ts";
 
 declare class AudioWorkletProcessor {
     readonly port: MessagePort;
@@ -92,7 +92,8 @@ class HostProcessor extends Base {
     readonly #chain: Topology;
     readonly #scheduler: Scheduler;
     readonly #runner: Runner;
-    readonly #transport: Transport = { tempo: 120, playing: true, beats: 0, seconds: 0 };
+    readonly #clock = new TransportClock(sampleRate);
+    readonly #transport: Transport = this.#clock.transport;
     // Every plug-in here, routed or not.
     readonly #slots = new Map<number, Slot>();
     // This block's events, taken once; the arrangement's take() gets the same.
@@ -187,7 +188,7 @@ class HostProcessor extends Base {
                 }
                 case "transport":
                     // In frame order: changes are sent as they're made, each at or after the last.
-                    this.#anchors.push(m.anchor);
+                    this.#clock.push(m.anchor);
                     return;
                 case "call": {
                     const plugin = this.#local.get(m.id);
@@ -260,38 +261,12 @@ class HostProcessor extends Base {
     }
 
     #lastError = "";
-    #anchor: TransportAnchor = {
-        frame: 0,
-        beats: 0,
-        seconds: 0,
-        tempo: 120,
-        playing: true,
-        numerator: 4,
-        denominator: 4,
-    };
-    readonly #anchors: TransportAnchor[] = [];
-
-    // The song position at this block's start, from the latest anchor whose frame has come: every host following
-    // one page Transport works it out the same way, so they agree to the frame.
-    #followAnchor(t: Transport, frame: number): void {
-        while (this.#anchors.length && (this.#anchors[0]?.frame ?? Infinity) <= frame)
-            this.#anchor = this.#anchors.shift() ?? this.#anchor;
-        const a = this.#anchor;
-        const elapsed = a.playing ? Math.max(0, frame - a.frame) / sampleRate : 0;
-        t.tempo = a.tempo;
-        t.playing = a.playing;
-        t.numerator = a.numerator;
-        t.denominator = a.denominator;
-        t.beats = a.beats + (elapsed * a.tempo) / 60;
-        t.seconds = a.seconds + elapsed;
-    }
-
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
         if (this.#destroyed) return false;
         const begin = Date.now();
         const frames = outputs[0]?.[0]?.length ?? 128;
         const t = this.#transport;
-        this.#followAnchor(t, currentFrame);
+        this.#clock.block(currentFrame, frames);
         // A throw out of process() would silence the node for good, with nothing said; a block that throws is
         // silent instead, reported once per kind of error, and the next block tries again.
         try {

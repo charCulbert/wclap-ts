@@ -37,6 +37,7 @@ import {
     clap_event_note,
     clap_event_note_expression,
     clap_event_param_value,
+    clap_event_transport,
     clap_host,
     clap_host_audio_ports,
     clap_host_gui,
@@ -79,6 +80,7 @@ export const EVENT_SIZE = Math.max(
     clap_event_note_expression.size,
     clap_event_midi2.size,
     clap_event_midi_sysex.size,
+    clap_event_transport.size,
 );
 // MIDI bytes (sysex) one block's events carry, at most: what the scheduler and each plug-in's output keep room for.
 export const BLOCK_MIDI_BYTES = 4096;

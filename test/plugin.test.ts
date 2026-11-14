@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { DEFAULT_MAP } from "../src/events/timeline.ts";
 import { capMemory } from "../src/page/wclap-host.ts";
 import {
     CLAP_CORE_EVENT_SPACE_ID,
@@ -9,11 +10,13 @@ import {
     CLAP_EVENT_PARAM_GESTURE_BEGIN,
     CLAP_EVENT_PARAM_GESTURE_END,
     CLAP_EVENT_PARAM_VALUE,
+    CLAP_EVENT_TRANSPORT,
     CLAP_EXT_LATENCY,
     CLAP_EXT_NOTE_NAME,
     CLAP_EXT_PARAMS,
     CLAP_EXT_STATE,
     CLAP_PARAM_CLEAR_ALL,
+    CLAP_TRANSPORT_IS_LOOP_ACTIVE,
     CLAP_TRANSPORT_IS_PLAYING,
     clap_event_header,
     clap_event_midi,
@@ -29,12 +32,14 @@ import {
     clap_output_events,
     clap_process,
 } from "../src/plugin/clap.generated.ts";
+import { EVENT_SIZE } from "../src/plugin/clap-host-callbacks.ts";
 import { PluginAudio } from "../src/plugin/plugin-audio-thread.ts";
 import { PluginMain } from "../src/plugin/plugin-main-thread.ts";
 import { Plugin } from "../src/plugin/plugin-one-thread.ts";
 import { Instance } from "../src/plugin/wasm-instance.ts";
 import { asPtr } from "../src/plugin/wasm-struct.ts";
 import { openBundle } from "../src/plugin/wclap-bundle.ts";
+import { TransportClock } from "../src/worklet/transport-clock.ts";
 import { fetchFixture, OUTSIDE_FIXTURES } from "./fetch-fixture.ts";
 
 const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}.wclap.tar.gz`, import.meta.url));
@@ -268,6 +273,43 @@ test("the transport is written into each block: play state, time signature, bar,
 
     audio.process(128);
     assert.equal(process.get("transport"), 0, "no transport, none passed");
+    audio.stop();
+    main.destroy();
+});
+
+test("a loop wrapping inside a block reaches the plug-in as a transport event on its frame, among the notes", async () => {
+    const instance = Instance.create(await openBundle(fixture("HeadlessGain")));
+    const main = PluginMain.create(instance, instance.plugins()[0]?.id ?? "", { log: () => undefined });
+    const setup = main.activate(48000, 128);
+    const audio = new PluginAudio(instance.wasm, setup, main.events, main.output, main.thread);
+    const process = instance.wasm.struct(clap_process, asPtr(setup.process));
+    const clock = new TransportClock(48000);
+    // 120 bpm: beat 1 is frame 24000, 64 frames into the block from 23936.
+    clock.push({ frame: 0, beats: 0, playing: true, map: DEFAULT_MAP, loop: { startBeat: 0, endBeat: 1 } });
+    clock.block(23936, 128);
+    const notes = [
+        { at: 10, type: "note-on", key: 60, velocity: 1 },
+        { at: 64, type: "note-on", key: 62, velocity: 1 },
+        { at: 100, type: "note-on", key: 64, velocity: 1 },
+    ] as const;
+    audio.process(128, notes, [], notes.length, clock.transport);
+    const header = (i: number) => instance.wasm.struct(clap_event_header, asPtr(setup.events + i * EVENT_SIZE));
+    assert.deepEqual(
+        [0, 1, 2, 3].map((i) => [header(i).get("type"), header(i).get("time")]),
+        [
+            [CLAP_EVENT_NOTE_ON, 10],
+            [CLAP_EVENT_TRANSPORT, 64],
+            [CLAP_EVENT_NOTE_ON, 64],
+            [CLAP_EVENT_NOTE_ON, 100],
+        ],
+        "in time order, the transport before a note on its frame",
+    );
+    const wrap = instance.wasm.struct(clap_event_transport, asPtr(setup.events + EVENT_SIZE));
+    assert.equal(BigInt(wrap.get("song_pos_beats")), 0n, "back at the loop start");
+    assert.equal(wrap.get("flags") & CLAP_TRANSPORT_IS_LOOP_ACTIVE, CLAP_TRANSPORT_IS_LOOP_ACTIVE);
+    assert.equal(BigInt(wrap.get("loop_end_beats")), BigInt(2 ** 31));
+    const start = instance.wasm.struct(clap_event_transport, asPtr(process.get("transport")));
+    assert.ok(BigInt(start.get("song_pos_beats")) > 0n, "the block starts before the wrap");
     audio.stop();
     main.destroy();
 });

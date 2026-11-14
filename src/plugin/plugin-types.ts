@@ -101,6 +101,8 @@ export interface AudioSetup {
 // Tempo and play state for plug-ins that follow the host (arpeggiators, synced delays).
 export interface Transport {
     tempo: number;
+    // Tempo change per frame while the tempo ramps (CLAP's tempo_inc), 0 or left out otherwise.
+    tempoInc?: number;
     playing: boolean;
     // Position in quarter notes, advanced by whoever processes.
     beats: number;
@@ -109,8 +111,22 @@ export interface Transport {
     denominator?: number;
     // Position in seconds, advanced alongside beats; from beats at the current tempo when left out.
     seconds?: number;
+    // The bar the position is in, from 0, and the beat it starts on; from beats and the signature when left out.
+    bar?: number;
+    barStart?: number;
+    // The loop, while one is set, in beats and seconds.
+    looping?: boolean;
+    loopStart?: number;
+    loopEnd?: number;
+    loopStartSeconds?: number;
+    loopEndSeconds?: number;
     // The chain's own frame count, so every plug-in in it shares one steady time.
     frame?: number;
+    // Where the transport changes inside the block (a tempo or signature point, a loop wrapping, a change from the
+    // page), each as it is from its frame `at`: the first `changeCount` of them. Plug-ins get each as a transport
+    // event on its frame.
+    changes?: (Transport & { at: number })[];
+    changeCount?: number;
 }
 
 // CLAP's log severities; a plug-in's console output is "info" (stdout) or "error" (stderr).

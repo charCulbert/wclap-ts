@@ -1,5 +1,6 @@
 // wclap-ts: WCLAPs on a web page. The building blocks underneath are in wclap-ts/core.
 
+export { barAt, beatsToSeconds, type Loop, secondsToBeats, type TempoMap } from "./events/timeline.ts";
 export { alignLatency } from "./page/align-latency.ts";
 export { isolate } from "./page/isolate.ts";
 export { loadWclap } from "./page/load-wclap.ts";

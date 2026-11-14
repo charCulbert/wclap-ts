@@ -50,35 +50,32 @@ const block = (node: Node, frame: number) => {
 test("transport changes the page sends reach the arrangement from their frame on", () => {
     const seen: Transport[] = [];
     const node = create("transport-test", (t) => void seen.push({ ...t }));
+    const map = (bpm: number, numerator = 4, denominator = 4) => ({
+        tempos: [{ beat: 0, bpm }],
+        signatures: [{ beat: 0, numerator, denominator }],
+    });
     const anchor = (a: Partial<TransportAnchor>): TransportAnchor => ({
         frame: 0,
         beats: 0,
-        seconds: 0,
-        tempo: 120,
         playing: true,
-        numerator: 4,
-        denominator: 4,
+        map: map(120),
+        loop: null,
         ...a,
     });
+    node.port.onmessage?.({ data: { type: "transport", anchor: anchor({ frame: 256, beats: 8, map: map(90) }) } });
     node.port.onmessage?.({
-        data: { type: "transport", anchor: anchor({ frame: 256, beats: 8, seconds: 4, tempo: 90 }) },
-    });
-    node.port.onmessage?.({
-        data: {
-            type: "transport",
-            anchor: anchor({ frame: 48256, beats: 20, tempo: 60, playing: false, numerator: 7, denominator: 8 }),
-        },
+        data: { type: "transport", anchor: anchor({ frame: 48256, beats: 20, playing: false, map: map(60, 7, 8) }) },
     });
     block(node, 128);
     assert.equal(seen[0]?.tempo, 120, "before the first anchor's frame, the default");
     block(node, 256);
     assert.deepEqual(
         [seen[1]?.tempo, seen[1]?.beats, seen[1]?.seconds, seen[1]?.frame],
-        [90, 8, 4, 256],
+        [90, 8, (8 * 60) / 90, 256],
         "on its frame",
     );
     block(node, 256 + 24000);
-    assert.deepEqual([seen[2]?.beats, seen[2]?.seconds], [8 + 0.75, 4.5], "half a second on at 90 BPM");
+    assert.ok(Math.abs((seen[2]?.beats ?? 0) - 8.75) < 1e-9, "half a second on at 90 BPM");
     block(node, 48256 + 4800);
     assert.deepEqual(
         [seen[3]?.tempo, seen[3]?.playing, seen[3]?.numerator, seen[3]?.denominator, seen[3]?.beats],

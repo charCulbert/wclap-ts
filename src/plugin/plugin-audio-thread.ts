@@ -14,6 +14,7 @@ import {
     CLAP_EVENT_PARAM_GESTURE_END,
     CLAP_EVENT_PARAM_MOD,
     CLAP_EVENT_PARAM_VALUE,
+    CLAP_EVENT_TRANSPORT,
     CLAP_NOTE_DIALECT_CLAP,
     CLAP_NOTE_DIALECT_MIDI2,
     CLAP_PROCESS_ERROR,
@@ -21,6 +22,7 @@ import {
     CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
     CLAP_TRANSPORT_HAS_TEMPO,
     CLAP_TRANSPORT_HAS_TIME_SIGNATURE,
+    CLAP_TRANSPORT_IS_LOOP_ACTIVE,
     CLAP_TRANSPORT_IS_PLAYING,
     clap_audio_buffer,
     clap_event_header,
@@ -56,6 +58,7 @@ export class PluginAudio {
     readonly #note: Struct<typeof clap_event_note>;
     readonly #param: Struct<typeof clap_event_param_value>;
     readonly #header: Struct<typeof clap_event_header>;
+    readonly #transportEvent: Struct<typeof clap_event_transport>;
     readonly #expression: Struct<typeof clap_event_note_expression>;
     readonly #transport: Struct<typeof clap_event_transport>;
     readonly #params: Struct<typeof clap_plugin_params> | undefined;
@@ -93,6 +96,7 @@ export class PluginAudio {
         this.#note = wasm.struct(clap_event_note, NULL);
         this.#param = wasm.struct(clap_event_param_value, NULL);
         this.#header = wasm.struct(clap_event_header, NULL);
+        this.#transportEvent = wasm.struct(clap_event_transport, NULL);
         this.#expression = wasm.struct(clap_event_note_expression, NULL);
         this.#params = setup.params ? wasm.struct(clap_plugin_params, asPtr(setup.params)) : undefined;
         this.#tail = setup.tail ? wasm.struct(clap_plugin_tail, asPtr(setup.tail)) : undefined;
@@ -162,13 +166,21 @@ export class PluginAudio {
         if (count > MAX_EVENTS) throw new Error(`more than ${MAX_EVENTS} events in one block`);
         this.#midiUsed = 0;
         let written = 0;
+        // The transport's changes inside the block go in among the events, in time order.
+        const changes = transport?.changes;
+        const changeCount = transport?.changeCount ?? 0;
+        let change = 0;
         for (let i = 0; i < count; i++) {
             const event = events[i];
             if (!event) break;
             if (!(event.at >= 0 && event.at < frames)) throw new Error(`event at frame ${event.at}, outside the block`);
             if (i > 0 && event.at < (events[i - 1]?.at ?? 0)) throw new Error("events are not in time order");
+            for (; change < changeCount && (changes?.[change]?.at ?? 0) <= event.at; change++)
+                written = this.#writeTransportEvent(changes?.[change] as Transport & { at: number }, written);
             written = this.#writeEvent(event, written);
         }
+        for (; change < changeCount; change++)
+            written = this.#writeTransportEvent(changes?.[change] as Transport & { at: number }, written);
         const views = this.#viewsFor(frames);
         const buffers = this.#process.get("audio_inputs");
         for (let p = 0; p < views.inputs.length; p++) {
@@ -206,7 +218,7 @@ export class PluginAudio {
 
         this.#process.set("steady_time", transport?.frame ?? this.#steadyTime);
         this.#process.set("frames_count", frames);
-        this.#process.set("transport", transport ? this.#writeTransport(transport) : NULL);
+        this.#process.set("transport", transport ? this.#writeTransport(transport, this.#transport) : NULL);
         this.#events.count = written;
         this.output.count = 0;
         this.#thread.audio = true;
@@ -230,29 +242,43 @@ export class PluginAudio {
         return outputs;
     }
 
-    // Bars from the start of the timeline, in the transport's time signature (4/4 unless set).
-    #writeTransport(t: Transport): Ptr<"clap_event_transport"> {
-        const s = this.#transport;
+    // The transport as CLAP has it; bars from the start of the timeline in its time signature unless it says.
+    #writeTransport(t: Transport, s: Struct<typeof clap_event_transport>): Ptr<"clap_event_transport"> {
         const numerator = t.numerator ?? 4;
         const denominator = t.denominator ?? 4;
         const beatsPerBar = (numerator * 4) / denominator;
-        const bar = Math.floor(t.beats / beatsPerBar);
+        const bar = t.bar ?? Math.floor(t.beats / beatsPerBar);
+        const fixed = (v: number) => Math.round(v * 2 ** 31);
         s.set(
             "flags",
             CLAP_TRANSPORT_HAS_TEMPO |
                 CLAP_TRANSPORT_HAS_BEATS_TIMELINE |
                 CLAP_TRANSPORT_HAS_SECONDS_TIMELINE |
                 CLAP_TRANSPORT_HAS_TIME_SIGNATURE |
-                (t.playing ? CLAP_TRANSPORT_IS_PLAYING : 0),
+                (t.playing ? CLAP_TRANSPORT_IS_PLAYING : 0) |
+                (t.looping ? CLAP_TRANSPORT_IS_LOOP_ACTIVE : 0),
         );
-        s.set("song_pos_beats", Math.round(t.beats * 2 ** 31));
-        s.set("song_pos_seconds", Math.round((t.seconds ?? (t.beats * 60) / t.tempo) * 2 ** 31));
+        s.set("song_pos_beats", fixed(t.beats));
+        s.set("song_pos_seconds", fixed(t.seconds ?? (t.beats * 60) / t.tempo));
         s.set("tempo", t.tempo);
+        s.set("tempo_inc", t.tempoInc ?? 0);
+        s.set("loop_start_beats", fixed(t.loopStart ?? 0));
+        s.set("loop_end_beats", fixed(t.loopEnd ?? 0));
+        s.set("loop_start_seconds", fixed(t.loopStartSeconds ?? 0));
+        s.set("loop_end_seconds", fixed(t.loopEndSeconds ?? 0));
         s.set("bar_number", bar);
-        s.set("bar_start", Math.round(bar * beatsPerBar * 2 ** 31));
+        s.set("bar_start", fixed(t.barStart ?? bar * beatsPerBar));
         s.set("tsig_num", numerator);
         s.set("tsig_denom", denominator);
         return s.at;
+    }
+
+    #writeTransportEvent(t: Transport & { at: number }, index: number): number {
+        if (index >= MAX_EVENTS) return index;
+        const at = this.setup.events + index * EVENT_SIZE;
+        this.#writeTransport(t, this.#transportEvent.moveTo(asPtr(at)));
+        this.#writeHeader(at, clap_event_transport.size, t.at, CLAP_EVENT_TRANSPORT, 0);
+        return index + 1;
     }
 
     stop(): void {
