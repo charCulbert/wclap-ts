@@ -270,7 +270,7 @@ test("alignLatency delays the faster chain by the slower one's latency", { timeo
         const { wclap, sleep } = window as unknown as Harness;
         const context = new AudioContext();
         const slow = await wclap.createChain(context);
-        await slow.add("/cache/openrb-compressor.wclap.tar.gz"); // reports 92 frames
+        const compressor = await slow.add("/cache/openrb-compressor.wclap.tar.gz"); // 92 frames at 48 kHz
         const fast = await wclap.createChain(context);
         await fast.add("/fixtures/HeadlessGain.wclap.tar.gz");
         const nodes = await wclap.alignLatency([slow, fast]);
@@ -278,13 +278,17 @@ test("alignLatency delays the faster chain by the slower one's latency", { timeo
         for (const node of nodes.values()) node.connect(context.destination);
         const time = (chain: typeof slow) => nodes.get(chain)?.delayTime.value ?? Number.NaN;
         await sleep(300); // the delay glides to its new time
-        const aligned = { slow: time(slow), fast: time(fast) };
+        const aligned = { slow: time(slow), fast: time(fast), latency: await compressor.latency() };
         (slow.plugins[0] as (typeof slow.plugins)[0]).enabled = false; // bypassed: no latency, aligned again
         await sleep(300);
         return { rate: context.sampleRate, aligned, bypassed: { slow: time(slow), fast: time(fast) } };
     });
     assert.equal(r.aligned.slow, 0);
-    assert.ok(Math.abs(r.aligned.fast - 92 / r.rate) < 1e-6, `fast chain delayed ${r.aligned.fast * r.rate} frames`);
+    assert.ok(r.aligned.latency > 0, "the compressor reports a latency");
+    assert.ok(
+        Math.abs(r.aligned.fast - r.aligned.latency / r.rate) < 1e-6,
+        `fast chain delayed ${r.aligned.fast * r.rate} frames, the compressor's latency is ${r.aligned.latency}`,
+    );
     assert.ok(Math.abs(r.bypassed.fast) < 1e-6, `still delayed ${r.bypassed.fast * r.rate} frames after bypass`);
     assert.equal(r.bypassed.slow, 0);
     assert.deepEqual(errors, []);
