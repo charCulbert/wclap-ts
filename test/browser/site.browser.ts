@@ -1,7 +1,8 @@
 // The site's nine examples in Google Chrome: each page starts, plays, and logs no errors. Run by
 // `npm run test:browser` (not `npm test`: it needs Chrome and the network, since most pages load their plug-ins from
 // GitHub). Audio is checked only for not being silent; test/refs.test.ts compares exact output with saved
-// references in Node, so it isn't repeated here.
+// references in Node, so it isn't repeated here. The last tests drive the library on a bare page
+// (test/browser/harness.html) with the repo's own test plug-ins.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -9,8 +10,16 @@ import type { AddressInfo } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { after, before, test } from "node:test";
 import { type Browser, chromium, type Page } from "playwright";
+import { type Fixture, fetchFixture, OPEN_WEBCLAP_BUNDLES } from "../fetch-fixture.ts";
 
 const root = new URL("../../site/", import.meta.url).pathname;
+// Beside the site: /test/ is this folder (harness.html), /fixtures/ the repo's test plug-ins, /cache/<name> a fetched
+// bundle (test/fetch-fixture.ts).
+const folders: Record<string, string> = {
+    "/test/": new URL(".", import.meta.url).pathname,
+    "/fixtures/": new URL("../fixtures/", import.meta.url).pathname,
+};
+const fetched = (name: string) => OPEN_WEBCLAP_BUNDLES.find((f) => f.name === name) as Fixture;
 const types: Record<string, string> = {
     ".html": "text/html",
     ".js": "text/javascript",
@@ -24,13 +33,16 @@ const types: Record<string, string> = {
 async function serve(isolated: boolean): Promise<{ server: Server; url: string }> {
     const server = createServer(async (request, response) => {
         const path = normalize(decodeURIComponent(new URL(request.url ?? "/", "http://x").pathname));
-        const file = join(root, path.endsWith("/") ? `${path}index.html` : path);
-        if (!file.startsWith(root)) return void response.writeHead(403).end();
+        const prefix = Object.keys(folders).find((p) => path.startsWith(p));
+        const dir = prefix ? (folders[prefix] as string) : root;
+        const file = join(dir, prefix ? path.slice(prefix.length) : path.endsWith("/") ? `${path}index.html` : path);
+        if (!file.startsWith(dir)) return void response.writeHead(403).end();
         // The site has no icon: a 204 for the one Chrome asks for, since it logs a 404 as a console error. Under
         // isolate() this goes through the service worker, which once failed every body-less response.
         if (path === "/favicon.ico") return void response.writeHead(204).end();
         try {
-            const body = await readFile(file);
+            const cached = /^\/cache\/([\w-]+)\.wclap\.tar\.gz$/.exec(path)?.[1];
+            const body = cached ? await fetchFixture(fetched(cached)) : await readFile(file);
             const headers: Record<string, string> = {
                 "Content-Type": types[extname(file)] ?? "application/octet-stream",
             };
@@ -182,6 +194,155 @@ test("isolate(): without the headers, the service worker isolates the page after
     await status(page).filter({ hasText: /./ }).waitFor({ timeout: 15000 });
     await page.waitForTimeout(1000);
     assert.ok((await peak(page)) > 1e-3, "silent");
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+// The harness page (test/browser/harness.html), clicked once so an AudioContext may start, with the module loaded.
+async function harness(): Promise<{ page: Page; errors: string[] }> {
+    const { page, errors } = await open(isolated.url, "test/harness.html");
+    await page.mouse.click(1, 1);
+    await page.waitForFunction(() => "wclap" in window);
+    return { page, errors };
+}
+
+// What the harness's tests reach on the page: the module, and a pause.
+type Harness = { wclap: typeof import("wclap-ts"); sleep: (ms: number) => Promise<void> };
+
+test("restoring a state brings the parameters back; a preset moves them", { timeout: 60000 }, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        const context = new AudioContext();
+        const synth = await wclap.loadWclap(context, "/fixtures/PICOH-101.wclap.tar.gz");
+        // Restoring state, the plug-in reports every parameter from the audio thread ("param"), and the page reads
+        // them all back ("value" for each one it had otherwise); either way `values` ends up as the plug-in has them.
+        const heard = new Map<number, number>();
+        const hear = (e: CustomEvent<{ id: number; value: number }>) => heard.set(e.detail.id, e.detail.value);
+        synth.addEventListener("param", hear);
+        synth.addEventListener("value", hear);
+        const saved = await synth.saveState();
+        await synth.loadState(saved);
+        await sleep(200);
+        const before = [...synth.values];
+        synth.param(0, 50); // Tune, from 0
+        await sleep(200);
+        const changed = await synth.saveState();
+        heard.clear();
+        await synth.loadState(saved);
+        await sleep(200);
+        const restored = { values: [...synth.values], heard: heard.get(0) };
+        synth.removeEventListener("param", hear);
+        synth.removeEventListener("value", hear);
+
+        const drum = await wclap.loadWclap(context, "/fixtures/Tapa.wclap.tar.gz");
+        const presets = await drum.presets();
+        await drum.loadPreset(presets[0] as (typeof presets)[0]);
+        await sleep(200);
+        const first = [...drum.values];
+        heard.clear();
+        drum.addEventListener("param", hear);
+        drum.addEventListener("value", hear);
+        await drum.loadPreset(presets[1] as (typeof presets)[0]);
+        await sleep(200);
+        return {
+            before,
+            changed: changed.join() !== saved.join(),
+            restored,
+            first,
+            second: [...drum.values],
+            presetHeard: [...heard],
+        };
+    });
+    assert.ok(r.changed, "the parameter change didn't reach the plug-in's state");
+    assert.deepEqual(r.restored.values, r.before);
+    assert.equal(r.restored.heard, 0);
+    const moved = r.second.filter(([id, v]) => new Map(r.first).get(id) !== v);
+    assert.ok(moved.length > 0, "the second preset moved no parameter");
+    for (const [id, v] of moved) assert.equal(new Map(r.presetHeard).get(id), v, `no event for parameter ${id}`);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test("alignLatency delays the faster chain by the slower one's latency", { timeout: 60000 }, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        const context = new AudioContext();
+        const slow = await wclap.createChain(context);
+        await slow.add("/cache/openrb-compressor.wclap.tar.gz"); // reports 92 frames
+        const fast = await wclap.createChain(context);
+        await fast.add("/fixtures/HeadlessGain.wclap.tar.gz");
+        const nodes = await wclap.alignLatency([slow, fast]);
+        // A DelayNode nothing pulls doesn't compute its delayTime, so each goes to the speakers.
+        for (const node of nodes.values()) node.connect(context.destination);
+        const time = (chain: typeof slow) => nodes.get(chain)?.delayTime.value ?? Number.NaN;
+        await sleep(300); // the delay glides to its new time
+        const aligned = { slow: time(slow), fast: time(fast) };
+        (slow.plugins[0] as (typeof slow.plugins)[0]).enabled = false; // bypassed: no latency, aligned again
+        await sleep(300);
+        return { rate: context.sampleRate, aligned, bypassed: { slow: time(slow), fast: time(fast) } };
+    });
+    assert.equal(r.aligned.slow, 0);
+    assert.ok(Math.abs(r.aligned.fast - 92 / r.rate) < 1e-6, `fast chain delayed ${r.aligned.fast * r.rate} frames`);
+    assert.ok(Math.abs(r.bypassed.fast) < 1e-6, `still delayed ${r.bypassed.fast * r.rate} frames after bypass`);
+    assert.equal(r.bypassed.slow, 0);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test("a full event queue drops a note-on but still delivers the note-off", { timeout: 60000 }, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        const context = new AudioContext();
+        const synth = await wclap.loadWclap(context, "/fixtures/PICOH-101.wclap.tar.gz");
+        const analyser = new AnalyserNode(context, { fftSize: 2048 });
+        synth.connect(analyser);
+        analyser.connect(context.destination);
+        const samples = new Float32Array(2048);
+        const level = async (ms: number) => {
+            let peak = 0;
+            for (const end = performance.now() + ms; performance.now() < end; await sleep(20)) {
+                analyser.getFloatTimeDomainData(samples);
+                for (const v of samples) peak = Math.max(peak, Math.abs(v));
+            }
+            return peak;
+        };
+        synth.noteOn(60, 0.8);
+        const playing = await level(500);
+        // With the audio thread stopped nothing is read, so the queue fills.
+        await context.suspend();
+        let filled = 0;
+        while (synth.param(0, 0)) filled++;
+        const noteOn = synth.noteOn(64, 0.8);
+        const noteOff = synth.noteOff(60);
+        await context.resume();
+        await sleep(1500); // the note's release
+        return { playing, filled, noteOn, noteOff, after: await level(300) };
+    });
+    assert.ok(r.playing > 1e-3, `silent before: ${r.playing}`);
+    assert.ok(r.filled > 100, `queue took ${r.filled} events`);
+    assert.equal(r.noteOn, false);
+    assert.equal(r.noteOff, true);
+    assert.ok(r.after < 1e-4, `the note hangs: peak ${r.after}`);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test("an interface whose URI has a query string loads in its frame", { timeout: 60000 }, async () => {
+    const { page, errors } = await harness();
+    const uri = await page.evaluate(async () => {
+        const { wclap } = window as unknown as Harness;
+        const context = new AudioContext();
+        // Its webview names /index.html?device=compressor, and it has no clap.gui.
+        const compressor = await wclap.loadWclap(context, "/cache/openrb-compressor.wclap.tar.gz");
+        await compressor.showInterface(document.querySelector("#ui") as HTMLElement);
+        return document.querySelector("#ui iframe")?.getAttribute("src");
+    });
+    assert.match(uri ?? "", /\?device=compressor$/);
+    await page.frameLocator("#ui iframe").locator("body *").first().waitFor({ timeout: 15000 });
+    await page.waitForTimeout(1000);
     assert.deepEqual(errors, []);
     await page.context().close();
 });

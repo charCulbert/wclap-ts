@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>wclap-ts test harness</title>
+<script type="importmap">{ "imports": { "wclap-ts": "/node_modules/wclap-ts/dist/index.js" } }</script>
+</head>
+<body>
+<div id="ui"></div>
+<!-- For the tests that drive the library directly: the module and a pause, on window once loaded. -->
+<script type="module">
+window.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+window.wclap = await import("wclap-ts");
+</script>
+</body>
+</html>
