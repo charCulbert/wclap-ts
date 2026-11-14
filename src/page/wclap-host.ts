@@ -120,7 +120,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
         this.#drain = setInterval(() => {
             this.#sendRetries();
             back.drain((frame, e) => {
-                if (e.type === "param") plugins.get(e.target)?.changed(e.id, e.value);
+                if (e.type === "param") plugins.get(e.target)?.changed(e.id, e.value, frame);
                 else if (e.type === "gesture-begin" || e.type === "gesture-end")
                     plugins.get(e.target)?.gesture(e.id, e.type === "gesture-begin");
                 else if (e.type === "note-on" || e.type === "note-off") {

@@ -150,6 +150,9 @@ Both plug-ins and chains are `EventTarget`s:
 synth.addEventListener("param", (e) => console.log(e.detail.id, e.detail.value));
 ```
 
+`values` holds each parameter as last set from the page or reported by the plug-in. A report the plug-in made before
+your latest `param` for that parameter, or before a `loadState` or `loadPreset` finished, arrives late and is dropped.
+
 A bypassed plug-in still takes parameter changes, fades out over one block (unless it's stopping just then, for a
 restart or removal), and lets go of its notes; brought back, it's reset and fades in. Notes sent to a bypassed
 plug-in pass on to the next one, as if it weren't there. Moving, removing or bypassing a plug-in also lets go of the

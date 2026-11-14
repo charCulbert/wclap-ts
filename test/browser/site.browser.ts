@@ -223,14 +223,13 @@ test("restoring a state brings the parameters back; a preset moves them", { time
         synth.addEventListener("value", hear);
         const saved = await synth.saveState();
         await synth.loadState(saved);
-        await sleep(200);
         const before = [...synth.values];
-        synth.param(0, 50); // Tune, from 0
+        synth.param(0, 50); // Tune, from 0, straight after the load: its late reports mustn't undo this
         await sleep(200);
+        const tuned = synth.values.get(0);
         const changed = await synth.saveState();
         heard.clear();
         await synth.loadState(saved);
-        await sleep(200);
         const restored = { values: [...synth.values], heard: heard.get(0) };
         synth.removeEventListener("param", hear);
         synth.removeEventListener("value", hear);
@@ -238,15 +237,14 @@ test("restoring a state brings the parameters back; a preset moves them", { time
         const drum = await wclap.loadWclap(context, "/fixtures/Tapa.wclap.tar.gz");
         const presets = await drum.presets();
         await drum.loadPreset(presets[0] as (typeof presets)[0]);
-        await sleep(200);
         const first = [...drum.values];
         heard.clear();
         drum.addEventListener("param", hear);
         drum.addEventListener("value", hear);
         await drum.loadPreset(presets[1] as (typeof presets)[0]);
-        await sleep(200);
         return {
             before,
+            tuned,
             changed: changed.join() !== saved.join(),
             restored,
             first,
@@ -254,6 +252,7 @@ test("restoring a state brings the parameters back; a preset moves them", { time
             presetHeard: [...heard],
         };
     });
+    assert.equal(r.tuned, 50, "a report from the load overwrote the parameter set after it");
     assert.ok(r.changed, "the parameter change didn't reach the plug-in's state");
     assert.deepEqual(r.restored.values, r.before);
     assert.equal(r.restored.heard, 0);

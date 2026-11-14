@@ -83,8 +83,16 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
         this.#ownsChain = true;
     }
 
+    // Reports the plug-in makes on the audio thread reach the page a little later than its answers to calls, so
+    // one made before the page's own change to a parameter, or before a state or preset load the page has read
+    // back, would undo it. By the frame each report was made on, those are dropped: the frame each parameter was
+    // last set from here, and the frame the last load was read back on.
+    readonly #setAt = new Map<number, number>();
+    #loadedAt = Number.NEGATIVE_INFINITY;
+
     /** @internal */
-    changed(id: number, value: number): void {
+    changed(id: number, value: number, frame = Number.POSITIVE_INFINITY): void {
+        if (frame < this.#loadedAt || frame < (this.#setAt.get(id) ?? Number.NEGATIVE_INFINITY)) return;
         this.values.set(id, value);
         this.dispatchEvent(new CustomEvent("param", { detail: { id, value } }));
     }
@@ -140,7 +148,10 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
     }
 
     param(id: number, value: number, when?: number): boolean {
-        const scheduled = this.host.schedule({ type: "param", id, value }, when, this.id);
+        const rate = this.host.context.sampleRate;
+        const frame = when === undefined ? this.host.clock.frameAt(performance.now()) : Math.round(when * rate);
+        this.#setAt.set(id, frame);
+        const scheduled = this.host.schedule({ type: "param", id, value }, frame / rate, this.id);
         // Followers (panels, knobs) hear of it when it takes effect, not when it was scheduled.
         const delay = when === undefined ? 0 : Math.max(0, (when - this.host.context.currentTime) * 1000);
         const apply = () => {
@@ -182,7 +193,9 @@ export class WclapPlugin extends TypedTarget<PluginEvents> {
 
     // After a state or preset load, every parameter as the plug-in now has it; a "value" event for each change.
     async #readValues(): Promise<void> {
-        for (const [id, value] of await this.call({ call: "param-values" })) {
+        const values = await this.call({ call: "param-values" });
+        this.#loadedAt = Math.round(this.host.context.currentTime * this.host.context.sampleRate);
+        for (const [id, value] of values) {
             if (this.values.get(id) === value) continue;
             this.values.set(id, value);
             this.dispatchEvent(new CustomEvent("value", { detail: { id, value } }));

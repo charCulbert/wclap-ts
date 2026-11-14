@@ -130,14 +130,13 @@ class HostProcessor extends Base {
             post: (data) => this.#send({ type: "message", data }),
             notesOut,
         });
+        // At the frame they were made on, so the page can tell a report from before its own change to that
+        // parameter (or before a state load it finished) and drop it.
         this.#runner.onParams = (id, out) => {
             for (let i = 0; i < out.count; i++) {
                 const e = out.events[i];
-                if (
-                    (e?.type === "param" || e?.type === "gesture-begin" || e?.type === "gesture-end") &&
-                    !back.push(0, e, id)
-                )
-                    this.#backDropped++;
+                if (!e || (e.type !== "param" && e.type !== "gesture-begin" && e.type !== "gesture-end")) continue;
+                if (!back.push(currentFrame + e.at, e, id)) this.#backDropped++;
             }
         };
         this.port.onmessage = (message: MessageEvent<ToProcessor>) => this.#receive(message.data);
