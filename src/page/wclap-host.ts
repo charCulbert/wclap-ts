@@ -166,6 +166,11 @@ export class WclapHost extends TypedTarget<HostEvents> {
         return this.node;
     }
 
+    // Plug-ins with CLAP's render extension are told they render offline.
+    get #offline(): boolean {
+        return typeof OfflineAudioContext !== "undefined" && this.context instanceof OfflineAudioContext;
+    }
+
     // Each two-thread plug-in's main role gets its own Worker, so one plug-in's slow work never holds up another's.
     #startWorker(id: number): Link {
         const worker = new Worker(new URL("worker.js", this.base), { type: "module" });
@@ -232,6 +237,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
                     memory: bundle.memory,
                     files: bundle.files,
                     ...(options.pluginId ? { pluginId: options.pluginId } : {}),
+                    ...(this.#offline ? { offline: true } : {}),
                 },
                 (m) => m.type === "added" && m.id === id,
             );
@@ -260,6 +266,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
                         sampleRate: this.context.sampleRate,
                         maxFrames: 128,
                         ...(options.pluginId ? { pluginId: options.pluginId } : {}),
+                        ...(this.#offline ? { offline: true } : {}),
                     },
                 },
                 (m) => m.type === "added" && m.id === id,

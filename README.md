@@ -178,6 +178,8 @@ notes held by the plug-ins after it, since their note-offs would no longer reach
   const bass = await createChain(context, { transport });
   transport.tempo = 132; // both, on the same block
   ```
+- On an `OfflineAudioContext` the same calls render faster than real time, and plug-ins with CLAP's render
+  extension are told they render offline, so they may use their slower, better algorithms.
 - A host only runs while its node is connected, directly or through other nodes, to the context's destination. A
   chain that makes no sound (a sequencer whose notes you take from `noteout`) still needs a path there: connect it
   through a `GainNode` at 0.

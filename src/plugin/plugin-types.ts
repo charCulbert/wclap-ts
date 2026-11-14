@@ -116,6 +116,9 @@ export interface MainOptions {
     onChange?: (what: Change) => void;
     // Where threads the plug-in started leave their requests; idle collects them.
     control?: Control;
+    // The host renders offline (an OfflineAudioContext): a plug-in with the render extension is told so before it's
+    // activated.
+    offline?: boolean;
 }
 
 export type Change = "latency" | "params" | "note-names" | "ports" | "state";

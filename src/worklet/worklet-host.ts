@@ -55,6 +55,7 @@ export type ToProcessor =
           memory: Bundle["memory"];
           files?: Map<string, Uint8Array>;
           pluginId?: string;
+          offline?: boolean;
       }
     | { type: "add-two"; id: number; index?: number; audio: AudioStart; ports: Ports }
     | { type: "remove"; id: number }
@@ -225,6 +226,7 @@ class HostProcessor extends Base {
                 maxFrames: this.#maxFrames,
                 ...(m.files ? { files: m.files } : {}),
                 ...(m.pluginId ? { pluginId: m.pluginId } : {}),
+                ...(m.offline ? { offline: true } : {}),
             },
             {
                 log: (text) => this.#send({ type: "log", id, text }),

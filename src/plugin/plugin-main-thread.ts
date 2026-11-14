@@ -11,6 +11,7 @@ import {
     CLAP_EXT_PRESET_LOAD_COMPAT,
     CLAP_EXT_REMOTE_CONTROLS,
     CLAP_EXT_REMOTE_CONTROLS_COMPAT,
+    CLAP_EXT_RENDER,
     CLAP_EXT_STATE,
     CLAP_EXT_TAIL,
     CLAP_EXT_TIMER_SUPPORT,
@@ -19,6 +20,7 @@ import {
     CLAP_PRESET_DISCOVERY_FACTORY_ID,
     CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT,
     CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN,
+    CLAP_RENDER_OFFLINE,
     clap_audio_buffer,
     clap_audio_port_info,
     clap_event_transport,
@@ -34,6 +36,7 @@ import {
     clap_plugin_params,
     clap_plugin_preset_load,
     clap_plugin_remote_controls,
+    clap_plugin_render,
     clap_plugin_state,
     clap_plugin_tail,
     clap_plugin_timer_support,
@@ -446,6 +449,12 @@ export class PluginMain {
             extensions: [...this.#host.extensions],
         };
         this.#activation = { sampleRate, maxFrames };
+        // Realtime is every plug-in's default, so only offline is said.
+        if (this.#options.offline) {
+            const render = this.extension(CLAP_EXT_RENDER, clap_plugin_render);
+            if (render && !render.call("set", this.plugin.at, CLAP_RENDER_OFFLINE))
+                this.#options.log?.("the plug-in can't render offline: it renders as in realtime");
+        }
         if (!this.plugin.call("activate", this.plugin.at, sampleRate, 1, maxFrames)) throw new Error("activate failed");
         this.#active = true;
         return setup;

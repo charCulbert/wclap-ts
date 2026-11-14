@@ -19,6 +19,8 @@ export interface StartOptions {
     sampleRate: number;
     maxFrames: number;
     pluginId?: string;
+    // On an OfflineAudioContext.
+    offline?: boolean;
 }
 
 // Everything the audio side needs; all of it can be posted to another thread.
@@ -77,7 +79,7 @@ export function startMain(
     const descriptors = instance.plugins();
     const descriptor = options.pluginId ? descriptors.find((d) => d.id === options.pluginId) : descriptors[0];
     if (!descriptor) throw new Error(`no plug-in ${options.pluginId ?? ""} in this WCLAP`);
-    plugin = PluginMain.create(instance, descriptor.id, { ...main, control });
+    plugin = PluginMain.create(instance, descriptor.id, { ...main, control, offline: options.offline ?? false });
     return { plugin, descriptor, control, ids };
 }
 
