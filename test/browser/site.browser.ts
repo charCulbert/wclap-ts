@@ -50,6 +50,8 @@ async function serve(isolated: boolean): Promise<{ server: Server; url: string }
                 headers["Cross-Origin-Opener-Policy"] = "same-origin";
                 headers["Cross-Origin-Embedder-Policy"] = "require-corp";
             }
+            // Embedded from the page's origin when interfaces run on their own (ChainOptions.uiBase).
+            if (path.endsWith("/frame.html")) headers["Cross-Origin-Resource-Policy"] = "cross-origin";
             response.writeHead(200, headers).end(body);
         } catch {
             response.writeHead(404).end();
@@ -98,14 +100,19 @@ function listen() {
 let browser: Browser;
 let isolated: { server: Server; url: string };
 let plain: { server: Server; url: string };
+// Two more origins for plug-ins' interfaces.
+let uiA: { server: Server; url: string };
+let uiB: { server: Server; url: string };
 before(async () => {
-    [isolated, plain] = await Promise.all([serve(true), serve(false)]);
+    [isolated, plain, uiA, uiB] = await Promise.all([serve(true), serve(false), serve(true), serve(true)]);
     browser = await chromium.launch({ channel: "chrome", headless: true });
 });
 after(async () => {
     await browser?.close();
     isolated?.server.close();
     plain?.server.close();
+    uiA?.server.close();
+    uiB?.server.close();
 });
 
 // A page in a fresh context (its own service workers and storage), its errors collected.
@@ -585,6 +592,55 @@ test("rapid edits while playing: no stalls, no errors, and every Worker and plug
     assert.equal(r.plugins, 1);
     assert.equal(r.workers, r.baseline, "every Worker started for an edit was stopped");
     assert.equal(r.stalls, 0, `the audio thread stalled during the edits (worst gap ${r.worstGapMs} ms)`);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test("two plug-ins' interfaces on two origins can't reach the page or each other's storage", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await harness();
+    const bases = [uiA.url, uiB.url].map((url) => `${url}node_modules/wclap-ts/dist/`);
+    const warnings = await page.evaluate(async (bases) => {
+        const { wclap } = window as unknown as Harness;
+        const context = new AudioContext();
+        const warnings: string[] = [];
+        let n = 0;
+        const chain = await wclap.createChain(context, {
+            uiBase: () => bases[n++],
+            onLog: (message, severity) => void (severity === "warning" && warnings.push(message)),
+        });
+        for (const id of ["a", "b"]) {
+            const plugin = await chain.add("/cache/openrb-compressor.wclap.tar.gz");
+            const element = document.createElement("div");
+            element.id = id;
+            document.body.append(element);
+            await plugin.showInterface(element);
+        }
+        return warnings;
+    }, bases);
+    assert.deepEqual(warnings, [], "no warning when every plug-in has its own origin");
+    const frame = async (id: string, origin: string) => {
+        await page.frameLocator(`#${id} iframe`).locator("body *").first().waitFor({ timeout: 15000 });
+        const found = page.frames().find((f) => f.url().startsWith(origin));
+        assert.ok(found, `a frame on ${origin}`);
+        return found;
+    };
+    const a = await frame("a", uiA.url.slice(0, -1));
+    const b = await frame("b", uiB.url.slice(0, -1));
+    await a.evaluate(() => localStorage.setItem("secret", "a"));
+    assert.equal(await b.evaluate(() => localStorage.getItem("secret")), null, "b can't read a's storage");
+    assert.equal(
+        await a.evaluate(() => {
+            try {
+                return window.top?.document.title ?? "none";
+            } catch {
+                return "blocked";
+            }
+        }),
+        "blocked",
+        "the page is out of reach",
+    );
     assert.deepEqual(errors, []);
     await page.context().close();
 });

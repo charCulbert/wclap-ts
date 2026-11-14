@@ -26,8 +26,10 @@ export interface ChainOptions {
     base?: string | URL;
     // Plug-ins' own interfaces run on the page's origin, trusted like any script on it, unless this names the same
     // folder (frame.html, frame.js, sw.js) served from a second origin: each interface then runs there, unable to
-    // reach the page. That origin's frame.html must be sent with Cross-Origin-Resource-Policy: cross-origin.
-    uiBase?: string | URL;
+    // reach the page. That origin's frame.html must be sent with Cross-Origin-Resource-Policy: cross-origin. Set it
+    // for plug-ins you didn't write. A function gives each plug-in its own (a hostname each, say), so their
+    // interfaces can't reach each other's storage either; undefined from it runs that one on the page's origin.
+    uiBase?: string | URL | ((plugin: WclapPlugin) => string | URL | undefined);
     // "one" keeps every plug-in on the audio thread even when it could use a Worker. A plug-in on the audio thread
     // also starts there, so adding one to a playing chain can interrupt the audio once (13-26 ms measured for a large
     // one in Chrome). A plug-in on a Worker starts there and doesn't.
@@ -92,7 +94,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
     readonly plugins: WclapPlugin[] = [];
     readonly clock: Clock;
     readonly base: URL;
-    readonly uiBase: URL | undefined;
+    #warnedUi = false;
     /** @internal */
     readonly options: ChainOptions;
     readonly #queue: EventQueue;
@@ -126,7 +128,6 @@ export class WclapHost extends TypedTarget<HostEvents> {
         super();
         this.context = context;
         this.base = base;
-        this.uiBase = options.uiBase === undefined ? undefined : new URL(String(options.uiBase), location.href);
         this.options = options;
         this.#queue = EventQueue.create();
         const back = EventQueue.create();
@@ -431,6 +432,21 @@ export class WclapHost extends TypedTarget<HostEvents> {
     setEnabled(plugin: WclapPlugin, on: boolean): void {
         this.#audio.post({ type: "enable", id: plugin.id, on });
         this.latencyChanged();
+    }
+
+    /** @internal Where this plug-in's interface runs: on its own origin, or (undefined) on the page's. */
+    uiBaseFor(plugin: WclapPlugin): URL | undefined {
+        const base = this.options.uiBase;
+        const chosen = typeof base === "function" ? base(plugin) : base;
+        if (chosen === undefined && !this.#warnedUi) {
+            this.#warnedUi = true;
+            this.options.onLog?.(
+                `${plugin.descriptor.name}'s interface runs on this page's origin, with the page's access: set uiBase for plug-ins you didn't write`,
+                "warning",
+                plugin,
+            );
+        }
+        return chosen === undefined ? undefined : new URL(String(chosen), location.href);
     }
 
     /** @internal WclapPlugin.reset. */

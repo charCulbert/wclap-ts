@@ -51,7 +51,7 @@ export async function showInterface(plugin: WclapPlugin, element: HTMLElement): 
     const info = await plugin.openInterface();
     if (!info) return showPanel(plugin, element);
     const external = /^[a-z][a-z0-9+.-]*:/i.test(info.uri);
-    const isolated = external ? undefined : plugin.host.uiBase;
+    const isolated = external ? undefined : plugin.host.uiBaseFor(plugin);
     // A path in the bundle; bundles from older builds keep their files in resources/.
     const path = info.uri.replace(/^\//, "");
     const entry =
@@ -65,6 +65,11 @@ export async function showInterface(plugin: WclapPlugin, element: HTMLElement): 
         // On the interface origin, frame.html takes the files and becomes the interface. No top navigation.
         src = new URL("frame.html", isolated).href;
         iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-modals");
+    } else if (external) {
+        // A page of the plug-in's own elsewhere: sandboxed too, and on this page's origin without an origin at all,
+        // so it can't reach the page either way.
+        iframe.sandbox.add("allow-scripts", "allow-forms", "allow-modals");
+        if (new URL(info.uri).origin !== location.origin) iframe.sandbox.add("allow-same-origin");
     } else if (!external && (await plugin.call({ call: "get-resource", path: info.uri }).catch(() => null))) {
         // The plug-in serves its own files.
         await startWorker(plugin.host.base);

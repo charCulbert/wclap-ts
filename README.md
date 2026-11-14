@@ -286,6 +286,16 @@ navigate it. `frame.html` on that origin must be sent with `Cross-Origin-Resourc
 const chain = await createChain(context, { base: "/wclap/", uiBase: "https://ui.example.com/wclap/" });
 ```
 
+Interfaces on one `uiBase` share that origin, and its storage. To keep plug-ins apart from each other too, give
+`uiBase` a function and each plug-in its own hostname:
+
+```ts
+const chain = await createChain(context, { uiBase: (plugin) => `https://${plugin.id}.ui.example.com/wclap/` });
+```
+
+Without `uiBase`, showing an interface logs a warning once. An interface the plug-in names by a full URL (its own
+site) is always loaded in a sandboxed frame that can't reach or navigate your page.
+
 `maxMemoryMB` (1024 by default) caps how far a plug-in's shared memory may grow.
 
 ## Your own graph in one worklet
