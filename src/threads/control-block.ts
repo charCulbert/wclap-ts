@@ -110,12 +110,16 @@ export class Control {
     }
 }
 
-// Atomics.waitAsync, with a timer holding the event loop open until its timeout: Node 22 doesn't count a pending
-// waitAsync and exits under it.
+// Atomics.waitAsync, with a timer holding the event loop open until it settles: Node 22 doesn't count a pending
+// waitAsync and exits under it. The timer must outlive the wait: one set to the same `ms` can fire first, and Node
+// then exits before the wait's own timeout resolves it.
 async function waitAsync(ints: Int32Array, index: number, value: number, ms: number): Promise<void> {
     const result = Atomics.waitAsync(ints, index, value, ms);
     if (!result.async) return;
-    const timer = setTimeout(() => undefined, ms);
-    await result.value;
-    clearTimeout(timer);
+    const hold = setInterval(() => undefined, 1 << 30);
+    try {
+        await result.value;
+    } finally {
+        clearInterval(hold);
+    }
 }
