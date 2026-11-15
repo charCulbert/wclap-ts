@@ -689,3 +689,69 @@ test("without the headers: a plug-in with its own memory plays, with a warning; 
     assert.deepEqual(errors, []);
     await page.context().close();
 });
+
+test("a crashed plug-in comes back: the README's rebuild, from plugin.bundle in one edit", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await harness();
+    const r = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        const context = new AudioContext();
+        const chain = await wclap.createChain(context);
+        const analyser = new AnalyserNode(context, { fftSize: 256 });
+        chain.connect(analyser);
+        const level = () => {
+            const samples = new Float32Array(256);
+            analyser.getFloatTimeDomainData(samples);
+            return samples[255];
+        };
+        // Outputs 0.5 until its Crash parameter is set to 1.
+        await chain.add("/cache/crash.wclap.tar.gz", {
+            pluginId: "com.charlieculbert.wclap-test-plugins.crash.instrument",
+        });
+        await sleep(200);
+        const playing = level();
+
+        let silent: number | undefined;
+        chain.addEventListener("failed", () => {
+            silent = level();
+        });
+        // As in the README.
+        const rebuilt = new Promise<void>((done) => {
+            chain.addEventListener("failed", (e) => {
+                const old = e.detail.plugin;
+                chain
+                    .edit(async (edit) => {
+                        await edit.add(old.bundle, {
+                            pluginId: old.descriptor.id,
+                            index: chain.plugins.indexOf(old),
+                        });
+                        edit.remove(old);
+                    })
+                    .then(done);
+            });
+        });
+        const crashed = chain.plugins[0];
+        crashed?.param(0, 1);
+        await rebuilt;
+        await sleep(200);
+        const back = level();
+        const result = {
+            playing,
+            silent,
+            back,
+            failed: crashed?.failed,
+            plugins: chain.plugins.length,
+            same: chain.plugins[0] === crashed,
+        };
+        await context.close();
+        return result;
+    });
+    assert.deepEqual(r, { playing: 0.5, silent: 0, back: 0.5, failed: true, plugins: 1, same: false });
+    // The trap is logged once, as it happened.
+    assert.deepEqual(
+        errors.map((e) => e.split("\n")[0]),
+        ["console: RuntimeError: unreachable"],
+    );
+    await page.context().close();
+});
