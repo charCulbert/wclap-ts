@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { EventQueue, Scheduler, type Timed } from "../src/events/event-queue.ts";
+import { DEFAULT_MAP, type TempoMap } from "../src/events/timeline.ts";
 import {
     CLAP_EXT_REMOTE_CONTROLS,
     CLAP_INVALID_ID,
@@ -19,6 +20,7 @@ import { openBundle } from "../src/plugin/wclap-bundle.ts";
 import { mainCall } from "../src/threads/main-thread-calls.ts";
 import { Chain } from "../src/worklet/chain.ts";
 import type { Processor } from "../src/worklet/plugin-runner.ts";
+import { type TransportAnchor, TransportClock } from "../src/worklet/transport-clock.ts";
 import { fetchFixture, TEST_PLUGINS } from "./fetch-fixture.ts";
 
 const load = async (name: string, options: MainOptions = {}) => {
@@ -710,4 +712,100 @@ test("audio-ports-activation: set before activating, and false for a plug-in wit
     const other = await load("param-indication");
     assert.equal(other.setPortActive(false, 1, false), false);
     other.destroy();
+});
+
+// transport: output 0 the transport events on each frame / flags, 1 beats / seconds, 2 tempo / tempo_inc, 3 bar start /
+// bar number, 4 the signature, 5 the loop in beats, 6 in seconds. Each channel holds what the host last sent.
+
+const transportRun = async (anchor: Partial<TransportAnchor>, blockStart: number) => {
+    const plugin = await load("transport");
+    const clock = new TransportClock(48000);
+    clock.push({ frame: 0, beats: 0, playing: true, map: DEFAULT_MAP, loop: null, ...anchor });
+    clock.block(blockStart, 128);
+    const out = plugin.process(128, [], [], 0, clock.transport);
+    plugin.destroy();
+    // Each channel's value on frame 0 and on frame 64, where these tests put the change.
+    return [0, 64].map((f) => out.map((port) => port.map((ch) => ch[f] as number)));
+};
+const near = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
+
+test("transport: the loop wraps on its frame, as an event inside the block", async () => {
+    // 120 bpm: a beat is 24000 frames. Looping beats 0 to 1, the block from 23936 wraps on its frame 64.
+    const [before, after] = await transportRun({ loop: { startBeat: 0, endBeat: 1 } }, 23936);
+    assert.deepEqual(before?.[0], [0, 95], "no event on frame 0; playing, looping, with every HAS_ flag");
+    assert.ok(near(before?.[1]?.[0] ?? 0, 23936 / 24000));
+    assert.deepEqual(after?.[0], [1, 95], "one event on frame 64");
+    assert.deepEqual(after?.[1], [0, 0], "back at the loop start");
+    assert.deepEqual(after?.[5], [0, 1]);
+    assert.deepEqual(after?.[6], [0, 0.5]);
+});
+
+test("transport: a tempo and signature point land on their frame, and a ramp sends its slope", async () => {
+    const map: TempoMap = {
+        tempos: [
+            { beat: 0, bpm: 120 },
+            { beat: 1, bpm: 90 },
+        ],
+        signatures: [
+            { beat: 0, numerator: 4, denominator: 4 },
+            { beat: 1, numerator: 3, denominator: 4 },
+        ],
+    };
+    const [before, after] = await transportRun({ map }, 23936);
+    assert.deepEqual(
+        [before?.[2], before?.[4], before?.[3]],
+        [
+            [120, 0],
+            [4, 4],
+            [0, 0],
+        ],
+    );
+    assert.deepEqual(after?.[0], [1, 31], "playing, no loop");
+    assert.deepEqual([after?.[1]?.[0], after?.[2], after?.[4], after?.[3]], [1, [90, 0], [3, 4], [1, 1]]);
+
+    // 120 gliding to 60 over 4 beats takes 8/3 s: -22.5 bpm a second.
+    const ramp: TempoMap = {
+        tempos: [
+            { beat: 0, bpm: 120, ramp: true },
+            { beat: 4, bpm: 60 },
+        ],
+        signatures: map.signatures,
+    };
+    const [start] = await transportRun({ map: ramp }, 0);
+    assert.equal(start?.[2]?.[0], 120);
+    assert.ok(near(start?.[2]?.[1] ?? 0, -22.5 / 48000), `tempo_inc ${start?.[2]?.[1]}`);
+});
+
+// crash: traps in process when its Crash parameter (ID 0) reaches 1. The effect passes its input through until then;
+// the instrument writes 0.5.
+
+test("crash: a real trap marks the plug-in failed; the effect passes its input on, the instrument goes silent", async () => {
+    const fixture = TEST_PLUGINS.find((f) => f.name === "crash");
+    assert.ok(fixture);
+    const bytes = await fetchFixture(fixture);
+    const run = async (id: string, failure: "pass" | "silence" = "pass") => {
+        const instance = Instance.create(await openBundle(bytes), { log: () => undefined });
+        const plugin = Plugin.wrap(PluginMain.create(instance, id, { log: () => undefined }));
+        plugin.activate(48000, 128);
+        const queue = EventQueue.create();
+        const chain = new Chain(new Scheduler(queue), 48000);
+        chain.runner.failure = failure;
+        const failed: number[] = [];
+        chain.onFailure = (slot) => failed.push(slot);
+        chain.add({ id: 7, processor: plugin, ports: plugin.ports, enabled: true, failed: false });
+        const input = new Float32Array(128).fill(0.25);
+        const block = (start: number) => {
+            const out = [[new Float32Array(128), new Float32Array(128)]];
+            chain.render(start, 128, [[input, input]], out);
+            return out[0]?.[0]?.[127];
+        };
+        const playing = block(0);
+        queue.push(128 + 32, { type: "param", id: 0, value: 1 });
+        const trapped = block(128);
+        return { playing, trapped, after: block(256), failed };
+    };
+    const effect = "com.charlieculbert.wclap-test-plugins.crash";
+    assert.deepEqual(await run(effect), { playing: 0.25, trapped: 0.25, after: 0.25, failed: [7] });
+    assert.deepEqual(await run(effect, "silence"), { playing: 0.25, trapped: 0, after: 0, failed: [7] });
+    assert.deepEqual(await run(`${effect}.instrument`), { playing: 0.5, trapped: 0, after: 0, failed: [7] });
 });

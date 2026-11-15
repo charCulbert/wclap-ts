@@ -67,29 +67,31 @@ export const OPEN_WEBCLAP_BUNDLES: Fixture[] = [
 ];
 
 // Our own test plug-ins, from a github.com/charCulbert/wclap-test-plugins release; each proves one thing a host must do.
-const TEST_PLUGINS_RELEASE = "https://github.com/charCulbert/wclap-test-plugins/releases/download/v0.3.2/";
+const TEST_PLUGINS_RELEASE = "https://github.com/charCulbert/wclap-test-plugins/releases/download/v0.3.3/";
 export const TEST_PLUGINS: Fixture[] = (
     [
-        ["audio-ports-activation", "2ccc0bfd5135900506ed898e0e5d0faa41e9c0b9ca30176f67ddd1bb4b5a561b"],
-        ["gui-lifecycle", "7b89ae3767bbd708f8f399ad711744f32bbb947c38dcddf47d1d0d1647adfbd5"],
-        ["log", "45fe0e817d12d8971871af531512721162996c1a147ba39a5c30cc42faa4f370"],
-        ["midi-echo", "c8d340531ea59f3c9b7f7b8b0e3ebf2cb96d276fa6b1b9f08048281a9612908d"],
-        ["note-ids", "44da335680adfd3c07eac242fda31c81d26e74f53b04ff890fac1d3c5de53ea9"],
-        ["note-name", "a4847aeb1138b36fa0437afb86afa74cb32ac4f7d9c2c9d385f01927141a5659"],
-        ["param-indication", "9505ed9ac3561c3e693a643bb64fc030144c384ac5053fff1dddf3a2293e1e53"],
-        ["probe", "a1f28df9b35e31f626feb87fc6e957c97620301420a74463e7ba7a1cf91a2bef"],
-        ["process-lifecycle", "d391c25e4aa99b5b135833363bfb5051e3db6c1f0214a96058e5bfd598a1d8bf"],
-        ["remote-controls", "6dfeb8a319e9a334336a7ed76c3cbbf2ae61f0e00dacb8d367c7f5fd9cd0743a"],
-        ["render", "d07c767d83d3ae8fa895ef862f8d5d4bb83927bb9dd00e9731865434f87b5d6e"],
-        ["state-context", "db9d1edee28ce8157f3af45a1ee576b908207c8552dad80b87adf271896f34a7"],
-        ["voice-info", "84cdc7fbf5ab1cd44a8afe8ead35c9a8d64d6f25f75fe19e6a12d96df43d4c57"],
+        ["audio-ports-activation", "1026e83183e723981cb01ef9ffaa3dce2acbe53eaed07fbd5d73ed9851e27391"],
+        ["crash", "1b382a4b8f0904ac85760621955304cee006e0dd17271039df91d23ee8e95272"],
+        ["gui-lifecycle", "4f54276e00190d5a6c166fca40c0bb0ebe065b0fbda64271411d90c24aa6ba1a"],
+        ["log", "da277e4a1a8cb4c8ce7487da223821179264baaf50eb017307f6f21926ec5371"],
+        ["midi-echo", "a026a3a22ea4b7dd3f090b7c234845ff2cbc13df8b3aa4a1d2fa21de6bd29df5"],
+        ["note-ids", "150fb86fafe3bced42e9902b23cefd4de75f8e90581aec5fa78e6eb334d173ce"],
+        ["note-name", "4980da1775737824f323c6df77cd47f6bb5bcf029b56a8cb2530dcc58fa0197f"],
+        ["param-indication", "b6d1a06b86fa5c02f775cb5557309f87094516d6ac693df6e6f10ba2b21ae6bb"],
+        ["probe", "9b9f152b66efca50a663b46c485d81bd5cacbce39fe85f5e248babc437b0ecb9"],
+        ["process-lifecycle", "17efb111bb546f8155d101b3863e30c4c090b6a0cd7558c52c0d034c98132871"],
+        ["remote-controls", "ce25e566d7a2ec12d36f847a6977e226267049fd350569dc5372113319bf6050"],
+        ["render", "6b2bbd2cb27631509a7a704adb1941b5d22aa565c839d5b5d53ef96527e03299"],
+        ["state-context", "451b8cd970635048c65a49fae72448bf1e523ef16caf758366e413caabfad483"],
+        ["transport", "720cd34022c1bac6d23347c40247be57f8f0207cfd312a6704320b1272b73668"],
+        ["voice-info", "c908928af6358126b541db05cb6fede9eb80b2b0c9ae3783a9d8c72f4b47fbca"],
     ] as const
 ).map(([name, sha256]) => ({
     name,
     url: `${TEST_PLUGINS_RELEASE}${name}.wclap.tar.gz`,
     sha256,
     licence: "MIT",
-    source: `https://github.com/charCulbert/wclap-test-plugins/tree/v0.3.2/plugins/${name}`,
+    source: `https://github.com/charCulbert/wclap-test-plugins/tree/v0.3.3/plugins/${name}`,
 }));
 
 export const OUTSIDE_FIXTURES = [...TEST_PLUGINS, ...OPEN_WEBCLAP_BUNDLES];

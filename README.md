@@ -102,7 +102,24 @@ its output is silence, and its time (`steady_time`) still moves on. Bypass, rese
 A plug-in that crashes (in WebAssembly, a trap) is marked `failed`, fires a `failed` event (on the plug-in and the
 chain), and isn't called again; the rest play on. From then on its input passes through when its inputs and outputs
 match (an effect), and it's silent otherwise (an instrument); the chain option `onFailure: "silence"` silences both.
-To bring it back, add a fresh copy from `plugin.bundle` in its place and load a state you saved, in one edit.
+To bring it back, add a fresh copy from `plugin.bundle` in its place and load a state you saved, in one edit:
+
+```ts
+const saved = new Map<WclapPlugin, Uint8Array>(); // fill with `await plugin.saveState()` as you go
+
+chain.addEventListener("failed", (e) => {
+    const old = e.detail.plugin;
+    chain.edit(async (edit) => {
+        const fresh = await edit.add(old.bundle, {
+            pluginId: old.descriptor.id,
+            index: chain.plugins.indexOf(old),
+        });
+        const state = saved.get(old);
+        if (state) await fresh.loadState(state);
+        edit.remove(old);
+    });
+});
+```
 
 Several changes can go in as one edit, which applies on a single block boundary:
 

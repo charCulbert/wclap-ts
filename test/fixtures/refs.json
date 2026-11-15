@@ -172,5 +172,17 @@
         "peak": 4,
         "rms": 2.9155,
         "notesOut": 0
+    },
+    "crash": {
+        "sha256": "eb55aa8c7375c8c232dfce5d21276b68082ae5e9bf4378bc90007daed0d057a8",
+        "peak": 0.5,
+        "rms": 0.3093,
+        "notesOut": 0
+    },
+    "transport": {
+        "sha256": "374e1a828c0dee67eb91c867199bcb50781189eb4d1e2b20ef7fd109688cfa1d",
+        "peak": 31,
+        "rms": 21.9203,
+        "notesOut": 0
     }
 }
