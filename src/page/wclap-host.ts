@@ -453,9 +453,8 @@ export class WclapHost extends TypedTarget<HostEvents> {
         const chosen = typeof base === "function" ? base(plugin) : base;
         if (chosen === undefined && !this.#warnedUi) {
             this.#warnedUi = true;
-            this.options.onLog?.(
+            this.warn(
                 `${plugin.descriptor.name}'s interface runs on this page's origin, with the page's access: set uiBase for plug-ins you didn't write`,
-                "warning",
                 plugin,
             );
         }
@@ -496,6 +495,12 @@ export class WclapHost extends TypedTarget<HostEvents> {
             const entries = this.#queue.takeEntries();
             if (entries) this.#audio.post({ type: "events", entries }, [entries.buffer]);
         });
+    }
+
+    /** @internal A warning goes to onLog, or the console without one: it's something to act on. */
+    warn(message: string, plugin?: WclapPlugin): void {
+        if (this.options.onLog) this.options.onLog(message, "warning", plugin);
+        else console.warn(message);
     }
 
     // `when`: AudioContext time for an exact frame; without it, now (constant latency), and the event is live
@@ -543,10 +548,7 @@ export class WclapHost extends TypedTarget<HostEvents> {
         const length = status === 0xf0 ? bytes.length : midiLength(status);
         if (status < 0x80 || bytes.length < length) return false;
         if (length > MAX_MIDI_BYTES) {
-            this.options.onLog?.(
-                `a ${length}-byte sysex is longer than the ${MAX_MIDI_BYTES} bytes carried: dropped`,
-                "warning",
-            );
+            this.warn(`a ${length}-byte sysex is longer than the ${MAX_MIDI_BYTES} bytes carried: dropped`);
             return false;
         }
         const data = Uint8Array.from({ length }, (_, i) => bytes[i] ?? 0);
