@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { after, before, test } from "node:test";
 import { type Browser, chromium, type Page } from "playwright";
+import { openBundle } from "../../src/plugin/wclap-bundle.ts";
 import { type Fixture, fetchFixture, OPEN_WEBCLAP_BUNDLES, TEST_PLUGINS } from "../fetch-fixture.ts";
 
 const root = new URL("../../site/", import.meta.url).pathname;
@@ -42,7 +43,13 @@ async function serve(isolated: boolean): Promise<{ server: Server; url: string }
         if (path === "/favicon.ico") return void response.writeHead(204).end();
         try {
             const cached = /^\/cache\/([\w-]+)\.wclap\.tar\.gz$/.exec(path)?.[1];
-            const body = cached ? await fetchFixture(fetched(cached)) : await readFile(file);
+            // /unpacked/<name>/<path>: one file of a fetched bundle, as an app that unpacked it would serve it.
+            const unpacked = /^\/unpacked\/([\w-]+)\/(.+)$/.exec(path);
+            const inBundle =
+                unpacked &&
+                (await openBundle(await fetchFixture(fetched(unpacked[1] ?? "")))).files.get(unpacked[2] ?? "");
+            if (unpacked && !inBundle) throw new Error("not in the bundle");
+            const body = inBundle ?? (cached ? await fetchFixture(fetched(cached)) : await readFile(file));
             const headers: Record<string, string> = {
                 "Content-Type": types[extname(file)] ?? "application/octet-stream",
                 // A sandboxed page has no origin, so every file it loads is a cross-origin request.
@@ -829,3 +836,37 @@ test("in a sandboxed page: isolate() resolves false, and an interface that can't
     assert.deepEqual(errors, []);
     await page.context().close();
 });
+
+// gui-lifecycle's page loads a stylesheet and fetches a file beside it, then says "Host accepted." once the plug-in
+// has answered its message.
+for (const [where, query] of [
+    ["on an ordinary page", ""],
+    ["in a sandboxed page, with no service worker", "?sandboxed"],
+] as const) {
+    test(`uiFiles: the plug-in's own interface from a folder the app serves, ${where}`, {
+        timeout: 60000,
+    }, async () => {
+        const { page, errors } = await open(plain.url, `test/harness.html${query}`);
+        await page.mouse.click(1, 1);
+        await page.waitForFunction(() => "wclap" in window);
+        const r = await page.evaluate(async () => {
+            const { wclap } = window as unknown as Harness;
+            const warnings: string[] = [];
+            await wclap.loadWclap(new AudioContext(), "/cache/gui-lifecycle.wclap.tar.gz", {
+                ui: document.querySelector("#ui"),
+                uiFiles: "/unpacked/gui-lifecycle/",
+                onLog: (message, severity) => void (severity === "warning" && warnings.push(message)),
+            });
+            const frame = document.querySelector("#ui iframe") as HTMLIFrameElement | null;
+            return {
+                src: frame && new URL(frame.src).pathname,
+                sandboxed: frame?.sandbox.contains("allow-scripts") && !frame.sandbox.contains("allow-same-origin"),
+                interfaceWarnings: warnings.filter((w) => w.includes("interface")),
+            };
+        });
+        assert.deepEqual(r, { src: "/unpacked/gui-lifecycle/ui/index.html", sandboxed: true, interfaceWarnings: [] });
+        await page.frameLocator("#ui iframe").getByText("Host accepted.").waitFor({ timeout: 15000 });
+        assert.deepEqual(errors, []);
+        await page.context().close();
+    });
+}

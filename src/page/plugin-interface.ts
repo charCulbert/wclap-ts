@@ -51,7 +51,9 @@ export async function showInterface(plugin: WclapPlugin, element: HTMLElement): 
     const info = await plugin.openInterface();
     if (!info) return showPanel(plugin, element);
     const external = /^[a-z][a-z0-9+.-]*:/i.test(info.uri);
-    const isolated = external ? undefined : plugin.host.uiBaseFor(plugin);
+    // Files the app serves itself (ChainOptions.uiFiles) are framed like a page of the plug-in's own elsewhere.
+    const files = external ? undefined : plugin.host.uiFilesFor(plugin);
+    const isolated = external || files ? undefined : plugin.host.uiBaseFor(plugin);
     // A path in the bundle; bundles from older builds keep their files in resources/.
     const path = info.uri.replace(/^\//, "");
     const entry =
@@ -65,11 +67,14 @@ export async function showInterface(plugin: WclapPlugin, element: HTMLElement): 
         // On the interface origin, frame.html takes the files and becomes the interface. No top navigation.
         src = new URL("frame.html", isolated).href;
         iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-modals");
-    } else if (external) {
-        // A page of the plug-in's own elsewhere: sandboxed too, and on this page's origin without an origin at all,
-        // so it can't reach the page either way.
+    } else if (external || files) {
+        // A page of the plug-in's own elsewhere, or its files where the app serves them: sandboxed too, and on this
+        // page's origin without an origin at all, so it can't reach the page either way. A frame without an origin
+        // loads its scripts and fonts only from a server that allows any origin (CORS).
+        if (files) src = new URL(entry, files).href;
         iframe.sandbox.add("allow-scripts", "allow-forms", "allow-modals");
-        if (new URL(info.uri).origin !== location.origin) iframe.sandbox.add("allow-same-origin");
+        if (globalThis.origin !== "null" && new URL(src).origin !== location.origin)
+            iframe.sandbox.add("allow-same-origin");
     } else {
         try {
             if (await plugin.call({ call: "get-resource", path: info.uri }).catch(() => null)) {

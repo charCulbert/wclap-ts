@@ -71,6 +71,12 @@ With neither, wclap-ts still runs plug-ins that have their own memory (one threa
 the audio thread by `postMessage`, still on their frames, with a longer default `lead` (1024 frames), and a warning
 is logged once. Plug-ins built with shared memory need the headers and are refused with an error saying so.
 
+Where a service worker can't register (inside a sandboxed frame, or in a browser set to block them), `isolate()`
+resolves to `false` and the page carries on as with neither. A plug-in's own interface needs the service worker too,
+since it serves the interface's files. There, `ui` and `showInterface` show the panel of its parameters instead, and
+a warning says why. To show the plug-in's own interface on such a page, serve its files yourself (`uiFiles`, under
+Security).
+
 ## A chain
 
 ```ts
@@ -314,8 +320,19 @@ Interfaces on one `uiBase` share that origin, and its storage. To keep plug-ins 
 const chain = await createChain(context, { uiBase: (plugin) => `https://${plugin.id}.ui.example.com/wclap/` });
 ```
 
-Without `uiBase`, showing an interface logs a warning once. An interface the plug-in names by a full URL (its own
+Without `uiBase`, showing an interface logs a warning once (to `onLog`, or the console without it). An interface the plug-in names by a full URL (its own
 site) is always loaded in a sandboxed frame that can't reach or navigate your page.
+
+On a page that can't have a service worker, unpack the plug-in's bundle into a folder you serve and pass it as
+`uiFiles`. wclap-ts frames the interface from there, sandboxed, and carries its messages as usual:
+
+```ts
+const synth = await loadWclap(context, url, { ui, uiFiles: "/synth-ui/" }); // or a function of the plug-in
+```
+
+The plug-in isn't asked for its files there (CLAP's `get_resource`), so the folder must hold what its page loads. A
+sandboxed frame has no origin, so the server must send `Access-Control-Allow-Origin` for its scripts and fonts to
+load. Where a service worker can register, leave `uiFiles` out: the plug-in then serves its own files.
 
 `maxMemoryMB` (1024 by default) caps how far a plug-in's shared memory may grow.
 

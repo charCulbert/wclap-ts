@@ -31,6 +31,11 @@ export interface ChainOptions {
     // for plug-ins you didn't write. A function gives each plug-in its own (a hostname each, say), so their
     // interfaces can't reach each other's storage either; undefined from it runs that one on the page's origin.
     uiBase?: string | URL | ((plugin: WclapPlugin) => string | URL | undefined);
+    // A folder where you serve a plug-in's bundle unpacked, for pages that can't have a service worker (a sandboxed
+    // frame): its interface is then framed from there, sandboxed, instead of being served by wclap-ts. The plug-in
+    // isn't asked for the files (webview's get_resource), so the folder must hold what its page loads. A function
+    // gives each plug-in its folder; undefined from it leaves that one to uiBase.
+    uiFiles?: string | URL | ((plugin: WclapPlugin) => string | URL | undefined);
     // "one" keeps every plug-in on the audio thread even when it could use a Worker. A plug-in on the audio thread
     // also starts there, so adding one to a playing chain can interrupt the audio once (13-26 ms measured for a large
     // one in Chrome). A plug-in on a Worker starts there and doesn't.
@@ -445,6 +450,13 @@ export class WclapHost extends TypedTarget<HostEvents> {
     setEnabled(plugin: WclapPlugin, on: boolean): void {
         this.#audio.post({ type: "enable", id: plugin.id, on });
         this.latencyChanged();
+    }
+
+    /** @internal The folder the app serves this plug-in's interface files from, if it does. */
+    uiFilesFor(plugin: WclapPlugin): URL | undefined {
+        const files = this.options.uiFiles;
+        const chosen = typeof files === "function" ? files(plugin) : files;
+        return chosen === undefined ? undefined : new URL(String(chosen), location.href);
     }
 
     /** @internal Where this plug-in's interface runs: on its own origin, or (undefined) on the page's. */
