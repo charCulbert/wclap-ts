@@ -70,15 +70,29 @@ export async function showInterface(plugin: WclapPlugin, element: HTMLElement): 
         // so it can't reach the page either way.
         iframe.sandbox.add("allow-scripts", "allow-forms", "allow-modals");
         if (new URL(info.uri).origin !== location.origin) iframe.sandbox.add("allow-same-origin");
-    } else if (!external && (await plugin.call({ call: "get-resource", path: info.uri }).catch(() => null))) {
-        // The plug-in serves its own files.
-        await startWorker(plugin.host.base);
-        answerResources();
-        const token = crypto.randomUUID();
-        served.set(token, plugin);
-        tokens.push(token);
-        src = new URL(`ui/${token}${info.uri.startsWith("/") ? "" : "/"}${info.uri}`, plugin.host.base).href;
-    } else if (!external) src = new URL(entry, await cacheBundle(plugin)).href;
+    } else {
+        try {
+            if (await plugin.call({ call: "get-resource", path: info.uri }).catch(() => null)) {
+                // The plug-in serves its own files.
+                await startWorker(plugin.host.base);
+                answerResources();
+                const token = crypto.randomUUID();
+                served.set(token, plugin);
+                tokens.push(token);
+                src = new URL(`ui/${token}${info.uri.startsWith("/") ? "" : "/"}${info.uri}`, plugin.host.base).href;
+            } else src = new URL(entry, await cacheBundle(plugin)).href;
+        } catch (error) {
+            // Both ways need the service worker. Where it can't register (a sandboxed frame, a browser that blocks
+            // them), the plug-in gets the panel instead.
+            void plugin.call({ call: "close-interface" }).catch(() => undefined);
+            const why = error instanceof Error ? error.message : String(error);
+            plugin.host.warn(
+                `${plugin.descriptor.name}'s interface can't be shown here, so its parameters are shown instead: ${why}`,
+                plugin,
+            );
+            return showPanel(plugin, element);
+        }
+    }
     iframe.title = plugin.descriptor.name;
     iframe.style.border = "0";
     iframe.style.display = "block";
@@ -110,14 +124,20 @@ export async function showInterface(plugin: WclapPlugin, element: HTMLElement): 
         }
     };
     const observer = new ResizeObserver(() => void fit());
-    const origin = new URL(src).origin;
+    // A sandboxed frame without allow-same-origin has no origin, and neither has any frame of a page that has none
+    // itself. Its messages come marked "null", and a message for it has to be addressed to any origin. The frame is
+    // still told apart by its window.
+    const opaque =
+        globalThis.origin === "null" || (iframe.sandbox.length > 0 && !iframe.sandbox.contains("allow-same-origin"));
+    const origin = opaque ? "null" : new URL(src).origin;
+    const target = opaque ? "*" : origin;
     const fromPage = async (event: MessageEvent) => {
         if (event.source !== iframe.contentWindow || event.origin !== origin) return;
         const data = event.data;
         if (isolated && data === "wclap-frame-ready") {
             const files = [...plugin.bundle.files];
             const open = { hash: await bundleHash(files), files, entry };
-            iframe.contentWindow?.postMessage(open, origin);
+            iframe.contentWindow?.postMessage(open, target);
             return;
         }
         const bytes =
@@ -132,7 +152,7 @@ export async function showInterface(plugin: WclapPlugin, element: HTMLElement): 
     };
     plugin.toInterface = (bytes) => {
         const buffer = bytes.slice().buffer;
-        iframe.contentWindow?.postMessage(buffer, origin, [buffer]);
+        iframe.contentWindow?.postMessage(buffer, target, [buffer]);
     };
     plugin.onInterfaceRequest = (request, width, height) => {
         if (request === "resize" && width && height) size(width, height);

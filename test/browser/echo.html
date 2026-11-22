@@ -1,0 +1,9 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>echo</title>
+<!-- A stand-in interface: sends back to the plug-in whatever the plug-in sends it. -->
+<script>
+addEventListener("message", (event) => {
+    if (event.source === parent) parent.postMessage(event.data, "*");
+});
+</script>

@@ -45,7 +45,12 @@ async function serve(isolated: boolean): Promise<{ server: Server; url: string }
             const body = cached ? await fetchFixture(fetched(cached)) : await readFile(file);
             const headers: Record<string, string> = {
                 "Content-Type": types[extname(file)] ?? "application/octet-stream",
+                // A sandboxed page has no origin, so every file it loads is a cross-origin request.
+                "Access-Control-Allow-Origin": "*",
             };
+            // ?sandboxed: the page as a sandboxed frame would get it, with no origin and so no service worker.
+            if (new URL(request.url ?? "/", "http://x").searchParams.has("sandboxed"))
+                headers["Content-Security-Policy"] = "sandbox allow-scripts";
             if (isolated) {
                 headers["Cross-Origin-Opener-Policy"] = "same-origin";
                 headers["Cross-Origin-Embedder-Policy"] = "require-corp";
@@ -753,5 +758,74 @@ test("a crashed plug-in comes back: the README's rebuild, from plugin.bundle in 
         errors.map((e) => e.split("\n")[0]),
         ["console: RuntimeError: unreachable"],
     );
+    await page.context().close();
+});
+
+test("an interface at a full URL on the page's own origin exchanges messages with the plug-in", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await harness();
+    const echoed = await page.evaluate(async () => {
+        const { wclap, sleep } = window as unknown as Harness;
+        const gain = await wclap.loadWclap(new AudioContext(), "/fixtures/HeadlessGain.wclap.tar.gz");
+        // HeadlessGain has no interface: stand in for a plug-in whose webview names a page by its full URL, and
+        // keep what that page sends the plug-in. echo.html sends back whatever it gets.
+        const plugin = gain as unknown as {
+            openInterface: () => Promise<unknown>;
+            call: (call: { call: string; bytes?: Uint8Array }) => Promise<unknown>;
+            toInterface?: (bytes: Uint8Array) => void;
+        };
+        plugin.openInterface = async () => ({
+            uri: new URL("/test/echo.html", location.href).href,
+            width: 200,
+            height: 100,
+            resizable: false,
+        });
+        let got: number[] | undefined;
+        const call = plugin.call.bind(plugin);
+        plugin.call = (c) => {
+            if (c.call !== "interface-message") return call(c);
+            got = [...(c.bytes ?? [])];
+            return Promise.resolve(true);
+        };
+        await gain.showInterface(document.querySelector("#ui") as HTMLElement);
+        for (let i = 0; i < 50 && !got; i++) {
+            plugin.toInterface?.(new Uint8Array([1, 2, 3]));
+            await sleep(100);
+        }
+        return got;
+    });
+    assert.deepEqual(echoed, [1, 2, 3]);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test("in a sandboxed page: isolate() resolves false, and an interface that can't be served becomes the panel", {
+    timeout: 60000,
+}, async () => {
+    const { page, errors } = await open(plain.url, "test/harness.html?sandboxed");
+    await page.mouse.click(1, 1);
+    await page.waitForFunction(() => "wclap" in window);
+    const r = await page.evaluate(async () => {
+        const { wclap } = window as unknown as Harness;
+        const isolated = await wclap.isolate().catch((error: Error) => `threw ${error.name}`);
+        const warnings: string[] = [];
+        // Its webview names a page in its bundle, which only a service worker could serve.
+        const compressor = await wclap
+            .loadWclap(new AudioContext(), "/cache/openrb-compressor.wclap.tar.gz", {
+                ui: document.querySelector("#ui"),
+                onLog: (message, severity) => void (severity === "warning" && warnings.push(message)),
+            })
+            .catch((error: Error) => `threw ${error.name}`);
+        return {
+            origin,
+            isolated,
+            loaded: typeof compressor === "string" ? compressor : "loaded",
+            panel: Boolean(document.querySelector("#ui .wclap-panel")),
+            warned: warnings.some((w) => w.includes("interface can't be shown")),
+        };
+    });
+    assert.deepEqual(r, { origin: "null", isolated: false, loaded: "loaded", panel: true, warned: true });
+    assert.deepEqual(errors, []);
     await page.context().close();
 });
