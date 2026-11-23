@@ -513,3 +513,32 @@ test("a crashed plug-in passes its input on when its ports match, and is silent 
     assert.deepEqual(run({ inputs: [], outputs: [2] }), { failed: [5], crashed: 0, after: 0 }, "an instrument");
     assert.deepEqual(run({ inputs: [2], outputs: [2] }, "silence"), { failed: [5], crashed: 0, after: 0 });
 });
+
+test("a plug-in whose main-thread work grows its memory between blocks still hands on its block's audio", () => {
+    const queue = EventQueue.create();
+    const chain = new Chain(new Scheduler(queue), 48000);
+    // Like a one-thread plug-in's memory: its output is a view of it, and idle() may grow it, which detaches every
+    // view made before.
+    let memory = new ArrayBuffer(2 * 128 * 4);
+    const processor: Processor = {
+        output: new OutputList(),
+        process: () => {
+            const views = [new Float32Array(memory, 0, 128), new Float32Array(memory, 512, 128)];
+            for (const v of views) v.fill(0.5);
+            return [views];
+        },
+        idle: () => {
+            memory = memory.transfer(memory.byteLength * 2);
+        },
+    };
+    let failed: unknown;
+    chain.runner.onFailure = (_id, error) => {
+        failed = error;
+    };
+    chain.add(slotOf(61, processor));
+    const out = stereo();
+    chain.render(0, 128, stereo(), out);
+    chain.render(128, 128, stereo(), out);
+    assert.equal(failed, undefined);
+    assert.equal(out[0]?.[0]?.[127], 0.5);
+});

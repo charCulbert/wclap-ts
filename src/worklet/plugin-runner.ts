@@ -116,10 +116,12 @@ export class Runner {
             }
             // Back from bypass: clear what it was holding (delay lines, envelopes) before fading in.
             if (fade === "in") p.reset?.();
+            // Main-thread work goes before the block, not after: on a plug-in with its own memory it may grow that
+            // memory, which detaches the views its block's audio is in.
+            p.idle?.();
             const rendered = p.process(frames, this.#events, inputs, n, this.transport);
             const held = this.#held.get(slot.id);
             this.#hold(held, n);
-            p.idle?.();
             if (!rendered) return null;
             this.processed = true;
             const out = p.output;
